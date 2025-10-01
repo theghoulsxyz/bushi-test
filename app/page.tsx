@@ -80,7 +80,7 @@ export default function BarbershopAdminPanel() {
             <img
               src={BRAND.logoLight}
               alt="logo"
-              className="h-32 md:h-48 w-auto cursor-pointer"
+              className="h-40 md:h-56 w-auto cursor-pointer"
               onClick={() => {
                 setCurrentYear(today.getFullYear());
                 setCurrentMonth(today.getMonth());
