@@ -1,6 +1,6 @@
-// v2 fix: deduplicated file to remove repeated blocks that caused Netlify build error
+// v2.1 fix: close <input /> properly, finish JSX, and keep remove button OUTSIDE the input.
 'use client';
-// Bushi Admin — Month grid + Day editor (2-column, no-scroll modal)
+// Bushi Admin — Month grid + Day editor (2-column on tablet/desktop; 1-column on mobile)
 // Clock (hours) + person names use clean sans-serif (Inter).
 
 import React, { useEffect, useMemo, useState } from 'react';
@@ -97,6 +97,10 @@ function runDevChecks(viewYear: number, viewMonth: number) {
   console.assert(matrix.length >= 4 && matrix.length <= 6, 'Month matrix rows out of range');
   console.assert(DAY_SLOTS.length > 0, 'Slots should not be empty');
   console.assert(matrix.flat().length >= 28 && matrix.flat().length <= 42, 'Month grid 28..42 days');
+  console.assert(
+    DAY_SLOTS.length === (END_HOUR - START_HOUR) * (60 / SLOT_MINUTES),
+    'Unexpected slot count for the day',
+  );
 }
 
 // =============================================================================
@@ -183,7 +187,7 @@ export default function BarbershopAdminPanel() {
           <img
             src={BRAND.logoLight}
             alt="logo"
-            className="h-40 sm:h-48 md:h-[22rem] w-auto cursor-pointer ml-1 sm:ml-2"
+            className="h-\[28vw\] min-h-\[120px\] max-h-56 sm:h-48 md:h-\[22rem\] w-auto cursor-pointer ml-2 sm:ml-2"
             onClick={() => {
               const now = new Date();
               setViewYear(now.getFullYear());
@@ -286,14 +290,14 @@ export default function BarbershopAdminPanel() {
         </div>
       )}
 
-      {/* ===== Day Editor Modal (2 columns, no scroll, remove only with value) ===== */}
+      {/* ===== Day Editor Modal ===== */}
       {selectedDate && (
         <div
           className="fixed inset-0 z-40 flex items-center justify-center bg-black/80"
           onMouseDown={() => setSelectedDate(null)}
         >
           <div
-            className="max-w-6xl w-[94vw] md:w-[1100px] h-[92vh] rounded-2xl border border-neutral-700 bg-[rgb(10,10,10)] p-4 md:p-6 shadow-2xl overflow-hidden"
+            className="max-w-6xl w-\[94vw\] md:w-\[1100px\] h-\[92vh\] rounded-2xl border border-neutral-700 bg-[rgb(10,10,10)] p-4 md:p-6 shadow-2xl overflow-y-auto md:overflow-hidden"
             onMouseDown={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between">
@@ -311,7 +315,7 @@ export default function BarbershopAdminPanel() {
               </button>
             </div>
 
-            {/* Two-column, compact rows; auto-fit rows to available height */}
+            {/* One column on mobile (scrollable); Two columns on md+ (no scroll) */}
             <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-2 md:gap-3 [grid-auto-rows:minmax(46px,1fr)] md:[grid-auto-rows:minmax(40px,1fr)]">
               {(() => {
                 const dayISO = toISODate(selectedDate);
@@ -324,18 +328,18 @@ export default function BarbershopAdminPanel() {
                   return (
                     <div
                       key={timeKey}
-                      className="rounded-2xl bg-neutral-900/80 border border-neutral-800 px-3 py-1.5 flex items-center gap-3 overflow-hidden"
+                      className="rounded-2xl bg-neutral-900 border border-neutral-800 px-3 py-1.5 flex items-center gap-3 overflow-hidden"
                     >
                       {/* Time (plain, no box) */}
                       <div
-                        className="text-[1.15rem] md:text-[1.25rem] font-semibold tabular-nums min-w-[4.75rem] text-center select-none"
+                        className="text-[1.25rem] md:text-[1.35rem] font-semibold tabular-nums min-w-[4.9rem] text-center select-none"
                         style={{ fontFamily: BRAND.fontBody }}
                       >
                         {time}
                       </div>
 
-                      {/* Name input + actions (input grows; remove button sits to the right, outside the input) */}
-                      <div className="flex-1 min-w-0 flex items-center gap-2">
+                      {/* Name input + actions */}
+                      <div className="relative flex-1 min-w-0 flex items-center gap-2">
                         <input
                           key={timeKey + value}
                           defaultValue={value}
@@ -347,35 +351,34 @@ export default function BarbershopAdminPanel() {
                             }
                           }}
                           onBlur={(e) => saveName(dayISO, time, e.currentTarget.value)}
-                          className={`block w-full text-white bg-[rgb(10,10,10)] border border-neutral-700/70 focus:border-white/70 focus:outline-none focus:ring-0 rounded-lg px-3 py-1.5 text-center transition-all duration-200`}
+                          className={`block w-full text-white bg-[rgb(10,10,10)] border border-neutral-700/70 focus:border-white/70 focus:outline-none focus:ring-0 rounded-lg px-3 py-1.5 text-center transition-all duration-200 ${hasName ? 'pr-3' : 'pr-3'}`}
                           style={{ fontFamily: BRAND.fontBody }}
                         />
 
-                        {/* Remove / Confirm button on the right (only when there's a name) */}
+                        {/* Saved pulse overlay (appears over the remove area, fades out) */}
+                        <img
+                          src="/tick-green.png"
+                          alt="saved"
+                          className={`pointer-events-none absolute right-10 md:right-12 top-1/2 -translate-y-1/2 w-5 h-5 md:w-6 md:h-6 transition-opacity duration-300 ${isSaved ? 'opacity-100' : 'opacity-0'}`}
+                        />
+
+                        {/* Remove / Confirm button to the RIGHT of the input */}
                         {hasName && (
-                          <div className="relative shrink-0">
-                            {/* Saved pulse overlays this button */}
+                          <button
+                            onClick={() => (isArmed ? confirmRemove(dayISO, time) : armRemove(timeKey))}
+                            className={`shrink-0 w-9 h-9 md:w-10 md:h-10 rounded-lg grid place-items-center transition border ${
+                              isArmed
+                                ? 'bg-red-900/30 border-red-600/70'
+                                : 'bg-neutral-900/60 hover:bg-neutral-800/70 border-neutral-700/50'
+                            }`}
+                            aria-label={isArmed ? 'Confirm remove' : 'Remove'}
+                          >
                             <img
-                              src="/tick-green.png"
-                              alt="saved"
-                              className={`pointer-events-none absolute -top-2 -right-2 w-5 h-5 md:w-6 md:h-6 transition-opacity duration-300 ${isSaved ? 'opacity-100' : 'opacity-0'}`}
+                              src={isArmed ? '/tick-green.png' : '/razor.png'}
+                              alt={isArmed ? 'Confirm' : 'Remove'}
+                              className="w-5 h-5 md:w-6 md:h-6 object-contain"
                             />
-                            <button
-                              onClick={() => (isArmed ? confirmRemove(dayISO, time) : armRemove(timeKey))}
-                              className={`w-9 h-9 md:w-10 md:h-10 rounded-lg grid place-items-center transition border ${
-                                isArmed
-                                  ? 'bg-red-900/30 border-red-600/70'
-                                  : 'bg-neutral-900/60 hover:bg-neutral-800/70 border-neutral-700/50'
-                              }`}
-                              aria-label={isArmed ? 'Confirm remove' : 'Remove'}
-                            >
-                              <img
-                                src={isArmed ? '/tick-green.png' : '/razor.png'}
-                                alt={isArmed ? 'Confirm' : 'Remove'}
-                                className="w-4 h-4 md:w-5 md:h-5 object-contain"
-                              />
-                            </button>
-                          </div>
+                          </button>
                         )}
                       </div>
                     </div>
