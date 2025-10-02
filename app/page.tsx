@@ -1,6 +1,6 @@
 'use client';
 // Bushi Admin — Month grid + Day editor (2-column, no-scroll modal)
-// Clock (hours) + person names use clean sans-serif (Inter). Fix unterminated string.
+// Clock (hours) + person names use clean sans-serif (Inter).
 
 import React, { useEffect, useMemo, useState } from 'react';
 
@@ -158,9 +158,9 @@ export default function BarbershopAdminPanel() {
       () => setSavedPulse((p) => (p && p.day === day && p.time === time ? null : p)),
       900,
     );
+    setArmedRemove(null);
   };
   const armRemove = (timeKey: string) => setArmedRemove(timeKey);
-  const cancelRemove = () => setArmedRemove(null);
   const confirmRemove = (day: string, time: string) => {
     setStore((prev) => {
       const next = { ...prev };
@@ -216,7 +216,7 @@ export default function BarbershopAdminPanel() {
 
         {/* Month grid */}
         <div
-          className="mt-4 grid grid-cols-7 gap-2 md:gap-4 overflow-y-auto pb-10"
+          className="mt-4 grid grid-cols-7 gap-2 md:gap-4 overflow-visible pb-10 md:pb-12"
           style={{ fontFamily: BRAND.fontNumbers }}
         >
           {matrix.flat().map((d) => {
@@ -248,7 +248,7 @@ export default function BarbershopAdminPanel() {
           onMouseDown={() => setShowYear(false)}
         >
           <div
-            className="max-w-5xl w-[92vw] md:w-[900px] rounded-2xl border border-neutral-700 bg-neutral-950 p-4 md:p-6 shadow-2xl overflow-y-auto max-h-[88vh]"
+            className="max-w-5xl w-[92vw] md:w-[900px] rounded-2xl border border-neutral-700 bg-[rgb(10,10,10)] p-4 md:p-6 shadow-2xl overflow-y-auto max-h-[88vh]"
             onMouseDown={(e) => e.stopPropagation()}
           >
             <div className="flex items-start justify-between">
@@ -291,7 +291,7 @@ export default function BarbershopAdminPanel() {
           onMouseDown={() => setSelectedDate(null)}
         >
           <div
-            className="max-w-6xl w-[94vw] md:w-[1100px] h-[92vh] rounded-2xl border border-neutral-700 bg-neutral-950 p-4 md:p-6 shadow-2xl overflow-hidden"
+            className="max-w-6xl w-[94vw] md:w-[1100px] h-[92vh] rounded-2xl border border-neutral-700 bg-[rgb(10,10,10)] p-4 md:p-6 shadow-2xl overflow-hidden"
             onMouseDown={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between">
@@ -324,19 +324,18 @@ export default function BarbershopAdminPanel() {
                       key={timeKey}
                       className="rounded-2xl bg-neutral-900/80 border border-neutral-800 px-3 py-1.5 flex items-center gap-3"
                     >
-                      {/* Time (tight) */}
+                      {/* Time (plain, no box) */}
                       <div
-                        className="text-[1.15rem] md:text-[1.25rem] font-semibold tabular-nums px-3 py-1 rounded-lg bg-neutral-950/60 border border-neutral-700/70 min-w-[4.75rem] text-center select-none"
+                        className="text-[1.15rem] md:text-[1.25rem] font-semibold tabular-nums min-w-[4.75rem] text-center select-none"
                         style={{ fontFamily: BRAND.fontBody }}
                       >
                         {time}
                       </div>
 
-                      {/* Name input (centered) */}
+                      {/* Name input */}
                       <input
                         key={timeKey + value}
                         defaultValue={value}
-                        placeholder=""
                         onKeyDown={(e) => {
                           if (e.key === 'Enter') {
                             const v = (e.target as HTMLInputElement).value;
@@ -345,40 +344,38 @@ export default function BarbershopAdminPanel() {
                           }
                         }}
                         onBlur={(e) => saveName(dayISO, time, e.currentTarget.value)}
-                        className={`text-white bg-neutral-950/50 border border-neutral-700/70 focus:border-white/70 focus:outline-none focus:ring-0 rounded-lg px-3 py-1.5 text-center transition-all duration-200 ${hasName ? 'flex-[1_1_auto] pr-1' : 'flex-1'}`}
+                        className={`text-white bg-[rgb(10,10,10)] border border-neutral-700/70 focus:border-white/70 focus:outline-none focus:ring-0 rounded-lg px-3 py-1.5 text-center transition-all duration-200 ${hasName ? 'flex-[1_1_auto] pr-1' : 'flex-1'}`}
                         style={{ fontFamily: BRAND.fontBody }}
                       />
 
-                      {/* Action area (fixed width). Saved tick overlays remove button and fades */}
-                      <div className="relative w-10 h-10 md:w-11 md:h-11 shrink-0 grid place-items-center">
+                      {/* Action area smaller */}
+                      <div className="relative shrink-0 grid place-items-center h-[38px] md:h-[40px] w-[40px] md:w-[44px]">
                         {/* Saved pulse overlays */}
                         <img
                           src="/tick-green.png"
                           alt="saved"
-                          className={`absolute inset-0 m-auto w-6 h-6 md:w-7 md:h-7 transition-opacity duration-300 ${isSaved ? 'opacity-100' : 'opacity-0'}`}
+                          className={`absolute inset-0 m-auto w-5 h-5 md:w-6 md:h-6 transition-opacity duration-300 pointer-events-none ${isSaved ? 'opacity-100' : 'opacity-0'}`}
                         />
 
-                        {/* Remove / Confirm (only if there is a name) */}
+                        {/* Remove / Confirm */}
                         {hasName ? (
                           <button
                             onClick={() => (isArmed ? confirmRemove(dayISO, time) : armRemove(timeKey))}
-                            className={`w-full h-full rounded-lg border grid place-items-center transition ${
+                            className={`w-full h-full rounded-lg grid place-items-center transition border ${
                               isArmed
-                                ? 'border-emerald-600/70 bg-emerald-900/30 hover:bg-emerald-900/50'
-                                : 'bg-neutral-950/50 border-neutral-700/70 hover:border-white/60'
+                                ? 'bg-red-900/30 border-red-600/70'
+                                : 'bg-transparent hover:bg-neutral-800/60 border-neutral-700/50'
                             }`}
                             aria-label={isArmed ? 'Confirm remove' : 'Remove'}
-                            title={isArmed ? 'Confirm' : 'Remove'}
                           >
                             <img
                               src={isArmed ? '/tick-green.png' : '/razor.png'}
-                              alt={isArmed ? 'confirm' : 'remove'}
-                              className="w-5 h-5 md:w-6 md:h-6"
+                              alt={isArmed ? 'Confirm' : 'Remove'}
+                              className="w-5 h-5 md:w-6 md:h-6 object-contain"
                             />
                           </button>
                         ) : (
-                          // Empty spacer to keep layout aligned when no name
-                          <div className="w-full h-full rounded-lg border border-transparent" />
+                          <div className="w-[40px] md:w-[44px]" />
                         )}
                       </div>
                     </div>
