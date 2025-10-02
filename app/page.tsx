@@ -1,4 +1,4 @@
-// v2.4 (Best Version + Swipe): Stable, working modals, good logo size, responsive day editor, and swipe/arrow navigation inside Day Editor
+// v2.5 (Swipe bugfix + clean handlers): one‑day swipe, stable modals, responsive day editor
 'use client';
 // Bushi Admin — Month grid + Day editor (2-column on tablet/desktop; 1-column on mobile)
 // Clock (hours) + person names use clean sans-serif (Inter).
@@ -98,6 +98,7 @@ function runDevChecks(viewYear: number, viewMonth: number) {
   console.assert(matrix.length >= 4 && matrix.length <= 6, 'Month matrix rows out of range');
   console.assert(DAY_SLOTS.length > 0, 'Slots should not be empty');
   console.assert(matrix.flat().length >= 28 && matrix.flat().length <= 42, 'Month grid 28..42 days');
+  console.assert(START_HOUR >= 0 && END_HOUR <= 24 && SLOT_MINUTES > 0, 'Slot constants sane');
 }
 
 // =============================================================================
@@ -132,14 +133,17 @@ export default function BarbershopAdminPanel() {
 
   const [armedRemove, setArmedRemove] = useState<string | null>(null);
   const [savedPulse, setSavedPulse] = useState<{ day: string; time: string; ts: number } | null>(null);
+
   // swipe state for smooth left/right day navigation on touch devices
-  const touchStartX = useRef<number | null>(null);
+  const swipeStartX = useRef<number | null>(null);
+  const swipeDX = useRef<number>(0);
   const [swipeStyle, setSwipeStyle] = useState<React.CSSProperties>({});
+  const SWIPE_THRESHOLD = 48; // px
 
   const shiftSelectedDay = (delta: number) => {
     setSelectedDate((prev) => {
       if (!prev) return prev;
-      const next = new Date(prev.getFullYear(), prev.getMonth(), prev.getDate() + delta);
+      const next = addDays(prev, delta);
       if (next.getFullYear() !== viewYear || next.getMonth() !== viewMonth) {
         setViewYear(next.getFullYear());
         setViewMonth(next.getMonth());
@@ -147,15 +151,17 @@ export default function BarbershopAdminPanel() {
       return next;
     });
   };
+
   const animateShift = (delta: number) => {
-    setSwipeStyle({ transform: `translateX(${delta > 0 ? -24 : 24}px)`, opacity: 0.3, transition: 'transform 180ms ease, opacity 180ms ease' });
+    // delta: -1 => left (previous), +1 => right (next)
+    setSwipeStyle({ transform: `translateX(${delta > 0 ? -24 : 24}px)`, opacity: 0.3, transition: 'transform 160ms ease, opacity 160ms ease' });
     setTimeout(() => {
       shiftSelectedDay(delta);
       setSwipeStyle({ transform: `translateX(${delta > 0 ? 24 : -24}px)`, opacity: 0.3, transition: 'none' });
       requestAnimationFrame(() => {
-        setSwipeStyle({ transform: 'translateX(0)', opacity: 1, transition: 'transform 180ms ease, opacity 180ms ease' });
+        setSwipeStyle({ transform: 'translateX(0)', opacity: 1, transition: 'transform 160ms ease, opacity 160ms ease' });
       });
-    }, 180);
+    }, 160);
   };
 
   const matrix = useMemo(() => monthMatrix(viewYear, viewMonth), [viewYear, viewMonth]);
@@ -196,8 +202,8 @@ export default function BarbershopAdminPanel() {
   };
 
   // ===== Day navigation helpers (prev/next, swipe, keyboard) =====
-  const goPrevDay = () => { animateShift(-1); };
-  const goNextDay = () => { animateShift(1); };
+  const goPrevDay = () => animateShift(-1);
+  const goNextDay = () => animateShift(1);
 
   // keyboard arrows when day editor is open
   useEffect(() => {
@@ -210,10 +216,29 @@ export default function BarbershopAdminPanel() {
     return () => window.removeEventListener('keydown', onKey);
   }, [selectedDate]);
 
-  // swipe detection within editor body
-  const swipeStartX = useRef(0);
-  const swipeDX = useRef(0);
-  const SWIPE_THRESHOLD = 48; // px
+  // touch handlers for swipe inside day editor
+  const onTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
+    swipeStartX.current = e.touches[0].clientX;
+    swipeDX.current = 0;
+    setSwipeStyle({ transition: 'none' });
+  };
+  const onTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (swipeStartX.current == null) return;
+    swipeDX.current = e.touches[0].clientX - swipeStartX.current;
+    setSwipeStyle({ transform: `translateX(${swipeDX.current}px)` });
+  };
+  const onTouchEnd = () => {
+    if (swipeStartX.current == null) return;
+    const dx = swipeDX.current;
+    swipeStartX.current = null;
+    swipeDX.current = 0;
+    if (Math.abs(dx) >= SWIPE_THRESHOLD) {
+      animateShift(dx > 0 ? -1 : 1); // exactly one day per swipe
+    } else {
+      // bounce back
+      setSwipeStyle({ transform: 'translateX(0)', transition: 'transform 160ms ease' });
+    }
+  };
 
   return (
     <div className="fixed inset-0 w-full h-dvh bg-black text-white overflow-hidden">
@@ -289,6 +314,7 @@ export default function BarbershopAdminPanel() {
           <div
             className="max-w-5xl w-[92vw] md:w-[900px] rounded-2xl border border-neutral-700 bg-[rgb(10,10,10)] p-4 md:p-6 shadow-2xl overflow-y-auto max-h-[88vh]"
             onMouseDown={(e) => e.stopPropagation()}
+            onTouchStart={(e) => e.stopPropagation()}
           >
             <div className="flex items-start justify-between">
               <h2 className="text-3xl md:text-5xl font-bold" style={{ fontFamily: BRAND.fontTitle }}>{viewYear}</h2>
@@ -316,19 +342,9 @@ export default function BarbershopAdminPanel() {
           <div
             className="max-w-6xl w-[94vw] md:w-[1100px] h-[92vh] rounded-2xl border border-neutral-700 bg-[rgb(10,10,10)] p-4 md:p-6 shadow-2xl overflow-hidden"
             onMouseDown={(e) => e.stopPropagation()}
-            onTouchStart={(e) => { touchStartX.current = e.touches[0].clientX; }}
-            onTouchEnd={(e) => {
-              const start = touchStartX.current;
-              if (start == null) return;
-              const dx = e.changedTouches[0].clientX - start;
-              touchStartX.current = null;
-              const TH = 48;
-              if (dx > TH) {
-                animateShift(-1);
-              } else if (dx < -TH) {
-                animateShift(1);
-              }
-            }}
+            onTouchStart={(e) => { e.stopPropagation(); onTouchStart(e); }}
+            onTouchMove={onTouchMove}
+            onTouchEnd={onTouchEnd}
           >
             <div className="flex items-center justify-between gap-2">
               <button
@@ -357,14 +373,6 @@ export default function BarbershopAdminPanel() {
             <div
               className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-3 overflow-y-auto md:overflow-hidden"
               style={{ ...swipeStyle, maxHeight: 'calc(92vh - 80px)', gridAutoRows: 'minmax(46px,1fr)' }}
-              onTouchStart={(e) => { swipeStartX.current = e.touches[0].clientX; swipeDX.current = 0; }}
-              onTouchMove={(e) => { swipeDX.current = e.touches[0].clientX - swipeStartX.current; }}
-              onTouchEnd={() => {
-                const dx = swipeDX.current;
-                if (Math.abs(dx) > SWIPE_THRESHOLD) {
-                  if (dx < 0) goNextDay(); else goPrevDay();
-                }
-              }}
             >
               {(() => {
                 const dayISO = toISODate(selectedDate);
@@ -375,8 +383,11 @@ export default function BarbershopAdminPanel() {
                   const timeKey = `${dayISO}_${time}`;
                   const isArmed = armedRemove === timeKey;
                   return (
-                    <div key={timeKey} className="rounded-2xl bg-neutral-900/80 border border-neutral-800 px-3 py-1.5 flex items-center gap-3 overflow-hidden">
+                    <div key={timeKey} className="relative rounded-2xl bg-neutral-900/80 border border-neutral-800 px-3 py-1.5 flex items-center gap-3 overflow-hidden">
+                      {/* Time (plain, no box) */}
                       <div className="text-[1.2rem] md:text-[1.28rem] font-semibold tabular-nums min-w-[4.9rem] text-center select-none" style={{ fontFamily: BRAND.fontBody }}>{time}</div>
+
+                      {/* Name input */}
                       <input
                         key={timeKey + value}
                         defaultValue={value}
@@ -391,6 +402,8 @@ export default function BarbershopAdminPanel() {
                         className={`flex-1 min-w-0 text-white bg-[rgb(10,10,10)] border border-neutral-700/70 focus:border-white/70 focus:outline-none focus:ring-0 rounded-lg px-3 py-1.5 text-center transition-all duration-200`}
                         style={{ fontFamily: BRAND.fontBody }}
                       />
+
+                      {/* Remove / Confirm button on the right (outside input but inside row) */}
                       {hasName && (
                         <button
                           onClick={() => (isArmed ? confirmRemove(dayISO, time) : armRemove(timeKey))}
@@ -400,7 +413,14 @@ export default function BarbershopAdminPanel() {
                           <img src={isArmed ? '/tick-green.png' : '/razor.png'} alt={isArmed ? 'Confirm' : 'Remove'} className="w-4 h-4 md:w-5 md:h-5 object-contain" />
                         </button>
                       )}
-                      <img src="/tick-green.png" alt="saved" className={`pointer-events-none absolute right-3 opacity-0 ${isSaved ? 'opacity-100' : 'opacity-0'}`} style={{ width: 20, height: 20 }} />
+
+                      {/* Saved tick (floats inside the row, non-interactive) */}
+                      <img
+                        src="/tick-green.png"
+                        alt="saved"
+                        className={`pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 transition-opacity duration-300 ${isSaved ? 'opacity-100' : 'opacity-0'}`}
+                        style={{ width: 20, height: 20 }}
+                      />
                     </div>
                   );
                 });
