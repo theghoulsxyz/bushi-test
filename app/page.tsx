@@ -332,50 +332,47 @@ export default function BarbershopAdminPanel() {
                         {time}
                       </div>
 
-                      {/* Name input */}
-                      <input
-                        key={timeKey + value}
-                        defaultValue={value}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') {
-                            const v = (e.target as HTMLInputElement).value;
-                            saveName(dayISO, time, v);
-                            (e.target as HTMLInputElement).blur();
-                          }
-                        }}
-                        onBlur={(e) => saveName(dayISO, time, e.currentTarget.value)}
-                        className={`min-w-0 flex-1 text-white bg-[rgb(10,10,10)] border border-neutral-700/70 focus:border-white/70 focus:outline-none focus:ring-0 rounded-lg px-3 py-1.5 text-center transition-all duration-200 ${hasName ? 'pr-2' : ''}`}
-                        style={{ fontFamily: BRAND.fontBody }}
-                      />
+                      {/* Name input + actions (keep everything inside the slot box) */}
+                      <div className="relative flex-1 min-w-0">
+                        <input
+                          key={timeKey + value}
+                          defaultValue={value}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              const v = (e.target as HTMLInputElement).value;
+                              saveName(dayISO, time, v);
+                              (e.target as HTMLInputElement).blur();
+                            }
+                          }}
+                          onBlur={(e) => saveName(dayISO, time, e.currentTarget.value)}
+                          className={`block w-full text-white bg-[rgb(10,10,10)] border border-neutral-700/70 focus:border-white/70 focus:outline-none focus:ring-0 rounded-lg px-3 py-1.5 text-center transition-all duration-200 ${hasName ? 'pr-12' : 'pr-3'}`}
+                          style={{ fontFamily: BRAND.fontBody }}
+                        />
 
-                      {/* Action area smaller */}
-                      <div className="relative shrink-0 grid place-items-center h-[38px] md:h-[40px] w-[40px] md:w-[44px]">
-                        {/* Saved pulse overlays */}
+                        {/* Saved pulse */}
                         <img
                           src="/tick-green.png"
                           alt="saved"
-                          className={`absolute inset-0 m-auto w-5 h-5 md:w-6 md:h-6 transition-opacity duration-300 pointer-events-none ${isSaved ? 'opacity-100' : 'opacity-0'}`}
+                          className={`pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 w-5 h-5 md:w-6 md:h-6 transition-opacity duration-300 ${isSaved ? 'opacity-100' : 'opacity-0'}`}
                         />
 
-                        {/* Remove / Confirm */}
-                        {hasName ? (
+                        {/* Remove / Confirm button (absolute, inside the input area) */}
+                        {hasName && (
                           <button
                             onClick={() => (isArmed ? confirmRemove(dayISO, time) : armRemove(timeKey))}
-                            className={`w-full h-full rounded-lg grid place-items-center transition border ${
+                            className={`absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 md:w-9 md:h-9 rounded-lg grid place-items-center transition border ${
                               isArmed
                                 ? 'bg-red-900/30 border-red-600/70'
-                                : 'bg-transparent hover:bg-neutral-800/60 border-neutral-700/50'
+                                : 'bg-neutral-900/60 hover:bg-neutral-800/70 border-neutral-700/50'
                             }`}
                             aria-label={isArmed ? 'Confirm remove' : 'Remove'}
                           >
                             <img
                               src={isArmed ? '/tick-green.png' : '/razor.png'}
                               alt={isArmed ? 'Confirm' : 'Remove'}
-                              className="w-5 h-5 md:w-6 md:h-6 object-contain"
+                              className="w-4 h-4 md:w-5 md:h-5 object-contain"
                             />
                           </button>
-                        ) : (
-                          <div className="w-[40px] md:w-[44px]" />
                         )}
                       </div>
                     </div>
@@ -388,3 +385,4 @@ export default function BarbershopAdminPanel() {
       )}
     </div>
   );
+}
