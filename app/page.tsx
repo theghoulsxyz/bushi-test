@@ -1,4 +1,4 @@
-// v3: adjust header spacing, logo larger, month/year responsive scaling
+// v3.1: revert logo sizing to earlier larger look, reduce gap between logo and month/year
 'use client';
 import React, { useEffect, useMemo, useState } from 'react';
 
@@ -99,13 +99,13 @@ export default function BarbershopAdminPanel() {
 
   return (
     <div className="fixed inset-0 w-full h-dvh bg-black text-white overflow-hidden">
-      <div className="max-w-screen-2xl mx-auto px-[clamp(12px,2.5vw,40px)] pt-[clamp(12px,2.5vw,32px)] pb-[clamp(8px,2vw,20px)] h-full flex flex-col select-none">
+      <div className="max-w-screen-2xl mx-auto px-[clamp(12px,2.5vw,40px)] pt-[clamp(12px,2vw,28px)] pb-[clamp(8px,2vw,20px)] h-full flex flex-col select-none">
         {/* Header */}
-        <div className="flex items-center justify-between gap-2 md:gap-4">
+        <div className="flex items-center justify-between gap-2 md:gap-6">
           <img
             src={BRAND.logoLight}
             alt="logo"
-            className="h-28 sm:h-36 md:h-44 lg:h-52 w-auto cursor-pointer"
+            className="h-32 sm:h-40 md:h-48 lg:h-56 w-auto cursor-pointer"
             onClick={() => {
               const now = new Date();
               setViewYear(now.getFullYear());
@@ -124,7 +124,7 @@ export default function BarbershopAdminPanel() {
 
         {/* Weekday labels */}
         <div
-          className="mt-[clamp(12px,2.2vw,20px)] grid grid-cols-7 gap-[clamp(6px,1vw,14px)] text-center"
+          className="mt-[clamp(12px,2vw,18px)] grid grid-cols-7 gap-[clamp(6px,1vw,14px)] text-center"
           style={{ fontFamily: BRAND.fontTitle }}
         >
           {WEEKDAYS_SHORT.map((d) => (
