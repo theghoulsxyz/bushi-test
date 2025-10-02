@@ -322,7 +322,7 @@ export default function BarbershopAdminPanel() {
                   return (
                     <div
                       key={timeKey}
-                      className="rounded-2xl bg-neutral-900/80 border border-neutral-800 px-3 py-1.5 flex items-center gap-3"
+                      className="rounded-2xl bg-neutral-900/80 border border-neutral-800 px-3 py-1.5 flex items-center gap-3 overflow-hidden"
                     >
                       {/* Time (plain, no box) */}
                       <div
@@ -344,7 +344,7 @@ export default function BarbershopAdminPanel() {
                           }
                         }}
                         onBlur={(e) => saveName(dayISO, time, e.currentTarget.value)}
-                        className={`text-white bg-[rgb(10,10,10)] border border-neutral-700/70 focus:border-white/70 focus:outline-none focus:ring-0 rounded-lg px-3 py-1.5 text-center transition-all duration-200 ${hasName ? 'flex-[1_1_auto] pr-1' : 'flex-1'}`}
+                        className={`min-w-0 flex-1 text-white bg-[rgb(10,10,10)] border border-neutral-700/70 focus:border-white/70 focus:outline-none focus:ring-0 rounded-lg px-3 py-1.5 text-center transition-all duration-200 ${hasName ? 'pr-2' : ''}`}
                         style={{ fontFamily: BRAND.fontBody }}
                       />
 
