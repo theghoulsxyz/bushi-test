@@ -1,3 +1,4 @@
+'use client';
 /* Updated: use Bebas Neue for month/year and weekday labels */
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
