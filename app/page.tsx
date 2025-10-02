@@ -1,4 +1,4 @@
-// v2.1 fix: close <input /> properly, finish JSX, and keep remove button OUTSIDE the input.
+// v2.3: restore Year & Day modals; keep good logo size; fix clicks; remove button sits to the right of input
 'use client';
 // Bushi Admin — Month grid + Day editor (2-column on tablet/desktop; 1-column on mobile)
 // Clock (hours) + person names use clean sans-serif (Inter).
@@ -187,7 +187,7 @@ export default function BarbershopAdminPanel() {
           <img
             src={BRAND.logoLight}
             alt="logo"
-            className="h-\[50vw\] min-h-\[200px\] max-h-\[400px\] sm:h-36 md:h-\[36rem\] w-auto cursor-pointer ml-2 sm:ml-2"
+            className="h-72 md:h-[22rem] w-auto cursor-pointer"
             onClick={() => {
               const now = new Date();
               setViewYear(now.getFullYear());
@@ -290,21 +290,19 @@ export default function BarbershopAdminPanel() {
         </div>
       )}
 
-      {/* ===== Day Editor Modal ===== */}
+      {/* ===== Day Editor Modal (solid bg, 2 cols on md+, 1 col on mobile) ===== */}
       {selectedDate && (
         <div
           className="fixed inset-0 z-40 flex items-center justify-center bg-black/80"
           onMouseDown={() => setSelectedDate(null)}
         >
           <div
-            className="max-w-6xl w-\[94vw\] md:w-\[1100px\] h-\[92vh\] rounded-2xl border border-neutral-700 bg-[rgb(10,10,10)] p-4 md:p-6 shadow-2xl overflow-y-auto md:overflow-hidden"
+            className="max-w-6xl w-[94vw] md:w-[1100px] h-[92vh] rounded-2xl border border-neutral-700 bg-[rgb(10,10,10)] p-4 md:p-6 shadow-2xl overflow-hidden"
             onMouseDown={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between">
               <h3 className="text-2xl md:text-3xl font-bold" style={{ fontFamily: BRAND.fontTitle }}>
-                {WEEKDAYS_SHORT[(selectedDate.getDay() + 6) % 7]} {selectedDate.getDate()} {
-                  MONTHS[selectedDate.getMonth()]
-                } {selectedDate.getFullYear()}
+                {WEEKDAYS_SHORT[(selectedDate.getDay() + 6) % 7]} {selectedDate.getDate()} {MONTHS[selectedDate.getMonth()]} {selectedDate.getFullYear()}
               </h3>
               <button
                 className="text-2xl md:text-3xl px-2 md:px-3"
@@ -315,8 +313,8 @@ export default function BarbershopAdminPanel() {
               </button>
             </div>
 
-            {/* One column on mobile (scrollable); Two columns on md+ (no scroll) */}
-            <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-2 md:gap-3 [grid-auto-rows:minmax(46px,1fr)] md:[grid-auto-rows:minmax(40px,1fr)]">
+            {/* Two-column on md+, one column on mobile. Rows auto-fit height; scroll only inner grid on mobile */}
+            <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-3 overflow-y-auto md:overflow-hidden" style={{ maxHeight: 'calc(92vh - 80px)', gridAutoRows: 'minmax(46px,1fr)' }}>
               {(() => {
                 const dayISO = toISODate(selectedDate);
                 return DAY_SLOTS.map((time) => {
@@ -328,59 +326,56 @@ export default function BarbershopAdminPanel() {
                   return (
                     <div
                       key={timeKey}
-                      className="rounded-2xl bg-neutral-900 border border-neutral-800 px-3 py-1.5 flex items-center gap-3 overflow-hidden"
+                      className="rounded-2xl bg-neutral-900/80 border border-neutral-800 px-3 py-1.5 flex items-center gap-3 overflow-hidden"
                     >
-                      {/* Time (plain, no box) */}
+                      {/* Time (plain) */}
                       <div
-                        className="text-[1.25rem] md:text-[1.35rem] font-semibold tabular-nums min-w-[4.9rem] text-center select-none"
+                        className="text-[1.2rem] md:text-[1.28rem] font-semibold tabular-nums min-w-[4.9rem] text-center select-none"
                         style={{ fontFamily: BRAND.fontBody }}
                       >
                         {time}
                       </div>
 
-                      {/* Name input + actions */}
-                      <div className="relative flex-1 min-w-0 flex items-center gap-2">
-                        <input
-                          key={timeKey + value}
-                          defaultValue={value}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') {
-                              const v = (e.target as HTMLInputElement).value;
-                              saveName(dayISO, time, v);
-                              (e.target as HTMLInputElement).blur();
-                            }
-                          }}
-                          onBlur={(e) => saveName(dayISO, time, e.currentTarget.value)}
-                          className={`block w-full text-white bg-[rgb(10,10,10)] border border-neutral-700/70 focus:border-white/70 focus:outline-none focus:ring-0 rounded-lg px-3 py-1.5 text-center transition-all duration-200 ${hasName ? 'pr-3' : 'pr-3'}`}
-                          style={{ fontFamily: BRAND.fontBody }}
-                        />
+                      {/* Name input */}
+                      <input
+                        key={timeKey + value}
+                        defaultValue={value}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            const v = (e.target as HTMLInputElement).value;
+                            saveName(dayISO, time, v);
+                            (e.target as HTMLInputElement).blur();
+                          }
+                        }}
+                        onBlur={(e) => saveName(dayISO, time, e.currentTarget.value)}
+                        className={`flex-1 min-w-0 text-white bg-[rgb(10,10,10)] border border-neutral-700/70 focus:border-white/70 focus:outline-none focus:ring-0 rounded-lg px-3 py-1.5 text-center transition-all duration-200`}
+                        style={{ fontFamily: BRAND.fontBody }}
+                      />
 
-                        {/* Saved pulse overlay (appears over the remove area, fades out) */}
-                        <img
-                          src="/tick-green.png"
-                          alt="saved"
-                          className={`pointer-events-none absolute right-10 md:right-12 top-1/2 -translate-y-1/2 w-5 h-5 md:w-6 md:h-6 transition-opacity duration-300 ${isSaved ? 'opacity-100' : 'opacity-0'}`}
-                        />
+                      {/* Remove / Confirm button OUTSIDE input, right side */}
+                      {hasName && (
+                        <button
+                          onClick={() => (isArmed ? confirmRemove(dayISO, time) : armRemove(timeKey))}
+                          className={`shrink-0 w-9 h-9 md:w-9 md:h-9 rounded-lg grid place-items-center transition border ${
+                            isArmed ? 'bg-red-900/30 border-red-600/70' : 'bg-neutral-900/60 hover:bg-neutral-800/70 border-neutral-700/50'
+                          }`}
+                          aria-label={isArmed ? 'Confirm remove' : 'Remove'}
+                        >
+                          <img
+                            src={isArmed ? '/tick-green.png' : '/razor.png'}
+                            alt={isArmed ? 'Confirm' : 'Remove'}
+                            className="w-4 h-4 md:w-5 md:h-5 object-contain"
+                          />
+                        </button>
+                      )}
 
-                        {/* Remove / Confirm button to the RIGHT of the input */}
-                        {hasName && (
-                          <button
-                            onClick={() => (isArmed ? confirmRemove(dayISO, time) : armRemove(timeKey))}
-                            className={`shrink-0 w-9 h-9 md:w-10 md:h-10 rounded-lg grid place-items-center transition border ${
-                              isArmed
-                                ? 'bg-red-900/30 border-red-600/70'
-                                : 'bg-neutral-900/60 hover:bg-neutral-800/70 border-neutral-700/50'
-                            }`}
-                            aria-label={isArmed ? 'Confirm remove' : 'Remove'}
-                          >
-                            <img
-                              src={isArmed ? '/tick-green.png' : '/razor.png'}
-                              alt={isArmed ? 'Confirm' : 'Remove'}
-                              className="w-5 h-5 md:w-6 md:h-6 object-contain"
-                            />
-                          </button>
-                        )}
-                      </div>
+                      {/* Saved pulse overlays on the right edge (above the remove) */}
+                      <img
+                        src="/tick-green.png"
+                        alt="saved"
+                        className={`pointer-events-none absolute right-3 opacity-0 ${isSaved ? 'opacity-100' : 'opacity-0'}`}
+                        style={{ width: 20, height: 20 }}
+                      />
                     </div>
                   );
                 });
