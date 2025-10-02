@@ -179,11 +179,11 @@ export default function BarbershopAdminPanel() {
       {/* Header + Month grid container */}
       <div className="max-w-screen-2xl mx-auto px-[clamp(12px,2.5vw,40px)] pt-[clamp(12px,2.5vw,40px)] pb-[clamp(8px,2vw,24px)] h-full flex flex-col select-none">
         {/* Header */}
-        <div className="flex items-center justify-between gap-3 md:gap-8">
+        <div className="flex items-center justify-between gap-4 md:gap-8">
           <img
             src={BRAND.logoLight}
             alt="logo"
-            className="h-28 sm:h-36 md:h-[22rem] w-auto cursor-pointer"
+            className="h-40 sm:h-48 md:h-[22rem] w-auto cursor-pointer ml-1 sm:ml-2"
             onClick={() => {
               const now = new Date();
               setViewYear(now.getFullYear());
@@ -312,7 +312,7 @@ export default function BarbershopAdminPanel() {
             </div>
 
             {/* Two-column, compact rows; auto-fit rows to available height */}
-            <div className="mt-4 grid grid-cols-2 gap-3" style={{ gridAutoRows: 'minmax(46px,1fr)' }}>
+            <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-2 md:gap-3 [grid-auto-rows:minmax(46px,1fr)] md:[grid-auto-rows:minmax(40px,1fr)]">
               {(() => {
                 const dayISO = toISODate(selectedDate);
                 return DAY_SLOTS.map((time) => {
