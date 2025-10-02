@@ -187,7 +187,7 @@ export default function BarbershopAdminPanel() {
           <img
             src={BRAND.logoLight}
             alt="logo"
-            className="h-\[40vw\] min-h-\[200px\] max-h-56 sm:h-48 md:h-\[22rem\] w-auto cursor-pointer ml-2 sm:ml-2"
+            className="h-\[50vw\] min-h-\[400px\] min-h-\[600px\] sm:h-68 md:h-\[48rem\] w-auto cursor-pointer ml-2 sm:ml-2"
             onClick={() => {
               const now = new Date();
               setViewYear(now.getFullYear());
