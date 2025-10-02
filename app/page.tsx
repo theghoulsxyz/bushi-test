@@ -179,11 +179,11 @@ export default function BarbershopAdminPanel() {
       {/* Header + Month grid container */}
       <div className="max-w-screen-2xl mx-auto px-[clamp(12px,2.5vw,40px)] pt-[clamp(12px,2.5vw,40px)] pb-[clamp(8px,2vw,24px)] h-full flex flex-col select-none">
         {/* Header */}
-        <div className="flex items-start md:items-center justify-between gap-4 md:gap-8">
+        <div className="flex items-center justify-between gap-3 md:gap-8">
           <img
             src={BRAND.logoLight}
             alt="logo"
-            className="h-72 md:h-[22rem] w-auto cursor-pointer"
+            className="h-28 sm:h-36 md:h-[22rem] w-auto cursor-pointer"
             onClick={() => {
               const now = new Date();
               setViewYear(now.getFullYear());
@@ -192,7 +192,7 @@ export default function BarbershopAdminPanel() {
           />
           <button
             onClick={() => setShowYear(true)}
-            className="text-4xl md:text-7xl font-bold cursor-pointer hover:text-gray-300 select-none"
+            className="text-3xl sm:text-4xl md:text-7xl font-bold cursor-pointer hover:text-gray-300 select-none text-right flex-1"
             style={{ fontFamily: BRAND.fontTitle }}
             title="Open year view"
           >
@@ -217,7 +217,7 @@ export default function BarbershopAdminPanel() {
 
         {/* Month grid */}
         <div
-          className="mt-[clamp(10px,2.2vw,20px)] flex-1 grid grid-cols-7 gap-[clamp(6px,1.2vw,16px)] overflow-visible pb-[clamp(24px,3.2vw,48px)]"
+          className="mt-[clamp(10px,2.2vw,20px)] flex-1 grid grid-cols-7 gap-[clamp(4px,2vw,16px)] overflow-visible pb-[clamp(24px,3.2vw,48px)]"
           style={{ fontFamily: BRAND.fontNumbers, gridAutoRows: '1fr' }}
         >
           {matrix.flat().map((d) => {
@@ -226,7 +226,7 @@ export default function BarbershopAdminPanel() {
             const num = d.getDate();
             const cls = [
               'rounded-2xl flex items-center justify-center bg-neutral-900 text-white border transition cursor-pointer',
-              'h-full w-full p-[clamp(8px,1.2vw,20px)] focus:outline-none focus:ring-2 focus:ring-white/60',
+              'h-full w-full aspect-square md:aspect-auto p-[clamp(6px,1vw,20px)] focus:outline-none focus:ring-2 focus:ring-white/60',
               inMonth ? 'border-neutral-700 hover:border-white/60' : 'border-neutral-800 opacity-40',
             ].join(' ');
             return (
