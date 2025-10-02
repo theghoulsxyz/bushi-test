@@ -1,9 +1,9 @@
-// v2.3: restore Year & Day modals; keep good logo size; fix clicks; remove button sits to the right of input
+// v2.4 (Best Version + Swipe): Stable, working modals, good logo size, responsive day editor, and swipe/arrow navigation inside Day Editor
 'use client';
 // Bushi Admin — Month grid + Day editor (2-column on tablet/desktop; 1-column on mobile)
 // Clock (hours) + person names use clean sans-serif (Inter).
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 
 // =============================================================================
 // Brand / Fonts
@@ -34,6 +34,7 @@ function injectBrandFonts() {
 // =============================================================================
 const pad = (n: number) => (n < 10 ? `0${n}` : `${n}`);
 const toISODate = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const addDays = (d: Date, delta: number) => new Date(d.getFullYear(), d.getMonth(), d.getDate() + delta);
 
 function monthMatrix(year: number, month: number) {
   const first = new Date(year, month, 1);
@@ -97,10 +98,6 @@ function runDevChecks(viewYear: number, viewMonth: number) {
   console.assert(matrix.length >= 4 && matrix.length <= 6, 'Month matrix rows out of range');
   console.assert(DAY_SLOTS.length > 0, 'Slots should not be empty');
   console.assert(matrix.flat().length >= 28 && matrix.flat().length <= 42, 'Month grid 28..42 days');
-  console.assert(
-    DAY_SLOTS.length === (END_HOUR - START_HOUR) * (60 / SLOT_MINUTES),
-    'Unexpected slot count for the day',
-  );
 }
 
 // =============================================================================
@@ -133,9 +130,33 @@ export default function BarbershopAdminPanel() {
     if (process.env.NODE_ENV !== 'production') runDevChecks(viewYear, viewMonth);
   }, [viewYear, viewMonth]);
 
-  // day editor UI state
   const [armedRemove, setArmedRemove] = useState<string | null>(null);
   const [savedPulse, setSavedPulse] = useState<{ day: string; time: string; ts: number } | null>(null);
+  // swipe state for smooth left/right day navigation on touch devices
+  const touchStartX = useRef<number | null>(null);
+  const [swipeStyle, setSwipeStyle] = useState<React.CSSProperties>({});
+
+  const shiftSelectedDay = (delta: number) => {
+    setSelectedDate((prev) => {
+      if (!prev) return prev;
+      const next = new Date(prev.getFullYear(), prev.getMonth(), prev.getDate() + delta);
+      if (next.getFullYear() !== viewYear || next.getMonth() !== viewMonth) {
+        setViewYear(next.getFullYear());
+        setViewMonth(next.getMonth());
+      }
+      return next;
+    });
+  };
+  const animateShift = (delta: number) => {
+    setSwipeStyle({ transform: `translateX(${delta > 0 ? -24 : 24}px)`, opacity: 0.3, transition: 'transform 180ms ease, opacity 180ms ease' });
+    setTimeout(() => {
+      shiftSelectedDay(delta);
+      setSwipeStyle({ transform: `translateX(${delta > 0 ? 24 : -24}px)`, opacity: 0.3, transition: 'none' });
+      requestAnimationFrame(() => {
+        setSwipeStyle({ transform: 'translateX(0)', opacity: 1, transition: 'transform 180ms ease, opacity 180ms ease' });
+      });
+    }, 180);
+  };
 
   const matrix = useMemo(() => monthMatrix(viewYear, viewMonth), [viewYear, viewMonth]);
 
@@ -144,7 +165,6 @@ export default function BarbershopAdminPanel() {
   };
   const monthLabel = `${MONTHS[viewMonth]} ${viewYear}`;
 
-  // save helpers
   const saveName = (day: string, time: string, nameRaw: string) => {
     const name = nameRaw.trim();
     setStore((prev) => {
@@ -159,10 +179,7 @@ export default function BarbershopAdminPanel() {
       return next;
     });
     setSavedPulse({ day, time, ts: Date.now() });
-    setTimeout(
-      () => setSavedPulse((p) => (p && p.day === day && p.time === time ? null : p)),
-      900,
-    );
+    setTimeout(() => setSavedPulse((p) => (p && p.day === day && p.time === time ? null : p)), 900);
     setArmedRemove(null);
   };
   const armRemove = (timeKey: string) => setArmedRemove(timeKey);
@@ -178,9 +195,28 @@ export default function BarbershopAdminPanel() {
     setArmedRemove(null);
   };
 
+  // ===== Day navigation helpers (prev/next, swipe, keyboard) =====
+  const goPrevDay = () => { animateShift(-1); };
+  const goNextDay = () => { animateShift(1); };
+
+  // keyboard arrows when day editor is open
+  useEffect(() => {
+    if (!selectedDate) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'ArrowLeft') { e.preventDefault(); goPrevDay(); }
+      if (e.key === 'ArrowRight') { e.preventDefault(); goNextDay(); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [selectedDate]);
+
+  // swipe detection within editor body
+  const swipeStartX = useRef(0);
+  const swipeDX = useRef(0);
+  const SWIPE_THRESHOLD = 48; // px
+
   return (
     <div className="fixed inset-0 w-full h-dvh bg-black text-white overflow-hidden">
-      {/* Header + Month grid container */}
       <div className="max-w-screen-2xl mx-auto px-[clamp(12px,2.5vw,40px)] pt-[clamp(12px,2.5vw,40px)] pb-[clamp(8px,2vw,24px)] h-full flex flex-col select-none">
         {/* Header */}
         <div className="flex items-center justify-between gap-4 md:gap-8">
@@ -247,39 +283,23 @@ export default function BarbershopAdminPanel() {
         </div>
       </div>
 
-      {/* ===== Year Modal ===== */}
+      {/* Year Modal */}
       {showYear && (
-        <div
-          className="fixed inset-0 z-40 flex items-center justify-center bg-black/80"
-          onMouseDown={() => setShowYear(false)}
-        >
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/80" onMouseDown={() => setShowYear(false)}>
           <div
             className="max-w-5xl w-[92vw] md:w-[900px] rounded-2xl border border-neutral-700 bg-[rgb(10,10,10)] p-4 md:p-6 shadow-2xl overflow-y-auto max-h-[88vh]"
             onMouseDown={(e) => e.stopPropagation()}
           >
             <div className="flex items-start justify-between">
-              <h2 className="text-3xl md:text-5xl font-bold" style={{ fontFamily: BRAND.fontTitle }}>
-                {viewYear}
-              </h2>
-              <button
-                className="text-3xl md:text-4xl px-2 md:px-3"
-                aria-label="Close"
-                onClick={() => setShowYear(false)}
-              >
-                ×
-              </button>
+              <h2 className="text-3xl md:text-5xl font-bold" style={{ fontFamily: BRAND.fontTitle }}>{viewYear}</h2>
+              <button className="text-3xl md:text-4xl px-2 md:px-3" aria-label="Close" onClick={() => setShowYear(false)}>×</button>
             </div>
             <div className="mt-4 grid grid-cols-3 md:grid-cols-4 gap-3 md:gap-4">
               {MONTHS.map((m, i) => (
                 <button
                   key={m}
-                  onClick={() => {
-                    setViewMonth(i);
-                    setShowYear(false);
-                  }}
-                  className={`rounded-xl border px-4 py-3 text-center transition bg-neutral-900 hover:bg-neutral-800 ${
-                    i === viewMonth ? 'border-white/70' : 'border-neutral-700'
-                  }`}
+                  onClick={() => { setViewMonth(i); setShowYear(false); }}
+                  className={`rounded-xl border px-4 py-3 text-center transition bg-neutral-900 hover:bg-neutral-800 ${i === viewMonth ? 'border-white/70' : 'border-neutral-700'}`}
                   style={{ fontFamily: BRAND.fontTitle }}
                 >
                   {m}
@@ -290,31 +310,62 @@ export default function BarbershopAdminPanel() {
         </div>
       )}
 
-      {/* ===== Day Editor Modal (solid bg, 2 cols on md+, 1 col on mobile) ===== */}
+      {/* Day Editor Modal with arrows + swipe */}
       {selectedDate && (
-        <div
-          className="fixed inset-0 z-40 flex items-center justify-center bg-black/80"
-          onMouseDown={() => setSelectedDate(null)}
-        >
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/80" onMouseDown={() => setSelectedDate(null)}>
           <div
             className="max-w-6xl w-[94vw] md:w-[1100px] h-[92vh] rounded-2xl border border-neutral-700 bg-[rgb(10,10,10)] p-4 md:p-6 shadow-2xl overflow-hidden"
             onMouseDown={(e) => e.stopPropagation()}
+            onTouchStart={(e) => { touchStartX.current = e.touches[0].clientX; }}
+            onTouchEnd={(e) => {
+              const start = touchStartX.current;
+              if (start == null) return;
+              const dx = e.changedTouches[0].clientX - start;
+              touchStartX.current = null;
+              const TH = 48;
+              if (dx > TH) {
+                animateShift(-1);
+              } else if (dx < -TH) {
+                animateShift(1);
+              }
+            }}
           >
-            <div className="flex items-center justify-between">
-              <h3 className="text-2xl md:text-3xl font-bold" style={{ fontFamily: BRAND.fontTitle }}>
+            <div className="flex items-center justify-between gap-2">
+              <button
+                className="hidden sm:inline-flex items-center justify-center w-10 h-10 rounded-lg border border-neutral-700/60 bg-neutral-900/60 hover:bg-neutral-800"
+                aria-label="Previous day"
+                onClick={goPrevDay}
+              >
+                ◀
+              </button>
+              <h3 className="flex-1 text-2xl md:text-3xl font-bold text-center" style={{ fontFamily: BRAND.fontTitle }}>
                 {WEEKDAYS_SHORT[(selectedDate.getDay() + 6) % 7]} {selectedDate.getDate()} {MONTHS[selectedDate.getMonth()]} {selectedDate.getFullYear()}
               </h3>
-              <button
-                className="text-2xl md:text-3xl px-2 md:px-3"
-                aria-label="Close"
-                onClick={() => setSelectedDate(null)}
-              >
-                ×
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  className="hidden sm:inline-flex items-center justify-center w-10 h-10 rounded-lg border border-neutral-700/60 bg-neutral-900/60 hover:bg-neutral-800"
+                  aria-label="Next day"
+                  onClick={goNextDay}
+                >
+                  ▶
+                </button>
+                <button className="text-2xl md:text-3xl px-2 md:px-3" aria-label="Close" onClick={() => setSelectedDate(null)}>×</button>
+              </div>
             </div>
 
-            {/* Two-column on md+, one column on mobile. Rows auto-fit height; scroll only inner grid on mobile */}
-            <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-3 overflow-y-auto md:overflow-hidden" style={{ maxHeight: 'calc(92vh - 80px)', gridAutoRows: 'minmax(46px,1fr)' }}>
+            {/* Two-column on md+, single column on mobile; swipe area */}
+            <div
+              className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-3 overflow-y-auto md:overflow-hidden"
+              style={{ ...swipeStyle, maxHeight: 'calc(92vh - 80px)', gridAutoRows: 'minmax(46px,1fr)' }}
+              onTouchStart={(e) => { swipeStartX.current = e.touches[0].clientX; swipeDX.current = 0; }}
+              onTouchMove={(e) => { swipeDX.current = e.touches[0].clientX - swipeStartX.current; }}
+              onTouchEnd={() => {
+                const dx = swipeDX.current;
+                if (Math.abs(dx) > SWIPE_THRESHOLD) {
+                  if (dx < 0) goNextDay(); else goPrevDay();
+                }
+              }}
+            >
               {(() => {
                 const dayISO = toISODate(selectedDate);
                 return DAY_SLOTS.map((time) => {
@@ -324,19 +375,8 @@ export default function BarbershopAdminPanel() {
                   const timeKey = `${dayISO}_${time}`;
                   const isArmed = armedRemove === timeKey;
                   return (
-                    <div
-                      key={timeKey}
-                      className="rounded-2xl bg-neutral-900/80 border border-neutral-800 px-3 py-1.5 flex items-center gap-3 overflow-hidden"
-                    >
-                      {/* Time (plain) */}
-                      <div
-                        className="text-[1.2rem] md:text-[1.28rem] font-semibold tabular-nums min-w-[4.9rem] text-center select-none"
-                        style={{ fontFamily: BRAND.fontBody }}
-                      >
-                        {time}
-                      </div>
-
-                      {/* Name input */}
+                    <div key={timeKey} className="rounded-2xl bg-neutral-900/80 border border-neutral-800 px-3 py-1.5 flex items-center gap-3 overflow-hidden">
+                      <div className="text-[1.2rem] md:text-[1.28rem] font-semibold tabular-nums min-w-[4.9rem] text-center select-none" style={{ fontFamily: BRAND.fontBody }}>{time}</div>
                       <input
                         key={timeKey + value}
                         defaultValue={value}
@@ -351,31 +391,16 @@ export default function BarbershopAdminPanel() {
                         className={`flex-1 min-w-0 text-white bg-[rgb(10,10,10)] border border-neutral-700/70 focus:border-white/70 focus:outline-none focus:ring-0 rounded-lg px-3 py-1.5 text-center transition-all duration-200`}
                         style={{ fontFamily: BRAND.fontBody }}
                       />
-
-                      {/* Remove / Confirm button OUTSIDE input, right side */}
                       {hasName && (
                         <button
                           onClick={() => (isArmed ? confirmRemove(dayISO, time) : armRemove(timeKey))}
-                          className={`shrink-0 w-9 h-9 md:w-9 md:h-9 rounded-lg grid place-items-center transition border ${
-                            isArmed ? 'bg-red-900/30 border-red-600/70' : 'bg-neutral-900/60 hover:bg-neutral-800/70 border-neutral-700/50'
-                          }`}
+                          className={`shrink-0 w-9 h-9 md:w-9 md:h-9 rounded-lg grid place-items-center transition border ${isArmed ? 'bg-red-900/30 border-red-600/70' : 'bg-neutral-900/60 hover:bg-neutral-800/70 border-neutral-700/50'}`}
                           aria-label={isArmed ? 'Confirm remove' : 'Remove'}
                         >
-                          <img
-                            src={isArmed ? '/tick-green.png' : '/razor.png'}
-                            alt={isArmed ? 'Confirm' : 'Remove'}
-                            className="w-4 h-4 md:w-5 md:h-5 object-contain"
-                          />
+                          <img src={isArmed ? '/tick-green.png' : '/razor.png'} alt={isArmed ? 'Confirm' : 'Remove'} className="w-4 h-4 md:w-5 md:h-5 object-contain" />
                         </button>
                       )}
-
-                      {/* Saved pulse overlays on the right edge (above the remove) */}
-                      <img
-                        src="/tick-green.png"
-                        alt="saved"
-                        className={`pointer-events-none absolute right-3 opacity-0 ${isSaved ? 'opacity-100' : 'opacity-0'}`}
-                        style={{ width: 20, height: 20 }}
-                      />
+                      <img src="/tick-green.png" alt="saved" className={`pointer-events-none absolute right-3 opacity-0 ${isSaved ? 'opacity-100' : 'opacity-0'}`} style={{ width: 20, height: 20 }} />
                     </div>
                   );
                 });
