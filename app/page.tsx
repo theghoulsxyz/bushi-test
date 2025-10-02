@@ -176,7 +176,7 @@ export default function BarbershopAdminPanel() {
   return (
     <div className="fixed inset-0 w-full h-dvh bg-black text-white overflow-hidden">
       {/* Header + Month grid container */}
-      <div className="max-w-7xl mx-auto p-4 md:p-10 h-full flex flex-col select-none">
+      <div className="max-w-screen-2xl mx-auto px-[clamp(12px,2.5vw,40px)] pt-[clamp(12px,2.5vw,40px)] pb-[clamp(8px,2vw,24px)] h-full flex flex-col select-none">
         {/* Header */}
         <div className="flex items-start md:items-center justify-between gap-4 md:gap-8">
           <img
@@ -201,13 +201,13 @@ export default function BarbershopAdminPanel() {
 
         {/* Weekday labels */}
         <div
-          className="mt-6 grid grid-cols-7 gap-2 md:gap-4 text-center"
+          className="mt-[clamp(12px,2.8vw,28px)] grid grid-cols-7 gap-[clamp(6px,1.2vw,16px)] text-center"
           style={{ fontFamily: BRAND.fontTitle }}
         >
           {WEEKDAYS_SHORT.map((d) => (
             <div
               key={d}
-              className="text-center text-[clamp(1.6rem,6.5vw,2.6rem)] md:text-[2.6rem] font-bold text-gray-300"
+              className="text-center font-bold text-gray-300 text-[clamp(18px,3.2vw,26px)]"
             >
               {d}
             </div>
@@ -216,7 +216,7 @@ export default function BarbershopAdminPanel() {
 
         {/* Month grid */}
         <div
-          className="mt-4 grid grid-cols-7 gap-2 md:gap-4 overflow-visible pb-10 md:pb-12"
+          className="mt-[clamp(10px,2.2vw,20px)] grid grid-cols-7 gap-[clamp(6px,1.2vw,16px)] overflow-visible pb-[clamp(24px,3.2vw,48px)]"
           style={{ fontFamily: BRAND.fontNumbers }}
         >
           {matrix.flat().map((d) => {
@@ -224,13 +224,14 @@ export default function BarbershopAdminPanel() {
             const key = toISODate(d);
             const num = d.getDate();
             const cls = [
-              'rounded-2xl flex items-center justify-center bg-neutral-900 text-white border transition cursor-pointer aspect-[0.78] md:aspect-square p-3 md:p-6 focus:outline-none focus:ring-2 focus:ring-white/60',
+              'rounded-2xl flex items-center justify-center bg-neutral-900 text-white border transition cursor-pointer',
+              'min-h-[clamp(42px,7.2vw,96px)] p-[clamp(8px,1.2vw,20px)] focus:outline-none focus:ring-2 focus:ring-white/60',
               inMonth ? 'border-neutral-700 hover:border-white/60' : 'border-neutral-800 opacity-40',
             ].join(' ');
             return (
               <button key={key} onClick={() => openDay(d)} className={cls}>
                 <span
-                  className="select-none text-[clamp(1.1rem,6.2vw,1.8rem)] md:text-[2rem]"
+                  className="select-none text-[clamp(17px,3.5vw,32px)]"
                   style={{ fontFamily: BRAND.fontNumbers }}
                 >
                   {num}
