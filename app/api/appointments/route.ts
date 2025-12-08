@@ -1,62 +1,47 @@
 // app/api/appointments/route.ts
 import { NextRequest, NextResponse } from "next/server";
-
-/**
- * Your frontend expects:
- * GET  -> { "2025-12-08": { "08:00": "Ali", "08:30": "Mehmet" }, ... }
- * POST -> same shape (replace all rows with the sent store)
- *
- * DB table: appointments(id int8 pk, day text, time text, name text)
- * RLS: OFF
- */
+import { createClient } from "@supabase/supabase-js";
 
 type Store = Record<string, Record<string, string>>;
 
-const SUPABASE_URL = process.env.SUPABASE_URL!;
-const SERVICE_ROLE = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-const TABLE_URL = `${SUPABASE_URL}/rest/v1/appointments`;
+const supabaseUrl = process.env.SUPABASE_URL!;
+const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
-function sbHeaders(extra?: HeadersInit): HeadersInit {
-  return {
-    apikey: SERVICE_ROLE,
-    Authorization: `Bearer ${SERVICE_ROLE}`,
-    ...(extra || {}),
-  };
-}
+const supabase = createClient(supabaseUrl, serviceRoleKey, {
+  auth: { persistSession: false },
+});
 
-// ---------- GET: read all rows, return as Store ----------
+// ---------- GET: read all rows and return Store ----------
 export async function GET() {
-  if (!SUPABASE_URL || !SERVICE_ROLE) {
+  if (!supabaseUrl || !serviceRoleKey) {
     console.error("Missing Supabase env vars");
     return NextResponse.json({}, { status: 500 });
   }
 
-  const res = await fetch(`${TABLE_URL}?select=day,time,name`, {
-    headers: sbHeaders(),
-    // Netlify can cache — avoid that; we want latest always
-    cache: "no-store",
-  });
+  const { data, error } = await supabase
+    .from("appointments")
+    .select("day, time, name");
 
-  if (!res.ok) {
-    const text = await res.text();
-    console.error("Supabase GET error:", res.status, text);
+  if (error) {
+    console.error("Supabase GET error:", error);
     return NextResponse.json({}, { status: 500 });
   }
 
-  const rows = (await res.json()) as { day: string; time: string; name: string | null }[];
-
   const store: Store = {};
-  for (const r of rows) {
-    if (!store[r.day]) store[r.day] = {};
-    if (r.name && r.name.trim()) store[r.day][r.time] = r.name.trim();
+  for (const row of (data || []) as { day: string; time: string; name: string | null }[]) {
+    if (!row.day || !row.time) continue;
+    if (!store[row.day]) store[row.day] = {};
+    if (row.name && row.name.trim()) {
+      store[row.day][row.time] = row.name.trim();
+    }
   }
 
   return NextResponse.json(store);
 }
 
-// ---------- POST: replace DB with the sent Store ----------
+// ---------- POST: replace DB content with sent Store ----------
 export async function POST(req: NextRequest) {
-  if (!SUPABASE_URL || !SERVICE_ROLE) {
+  if (!supabaseUrl || !serviceRoleKey) {
     console.error("Missing Supabase env vars");
     return NextResponse.json({ error: "Missing env vars" }, { status: 500 });
   }
@@ -68,7 +53,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Bad JSON" }, { status: 400 });
   }
 
-  // Flatten {day:{time:name}} -> [{day,time,name}, ...]
+  // Flatten { day: { time: name } } -> [{ day, time, name }, ...]
   const rows: { day: string; time: string; name: string }[] = [];
   for (const [day, slots] of Object.entries(body)) {
     for (const [time, name] of Object.entries(slots)) {
@@ -78,40 +63,29 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // 1) Delete all existing rows (small dataset, single-user = simplest + safe)
-  const del = await fetch(TABLE_URL, {
-    method: "DELETE",
-    headers: sbHeaders({
-      "Content-Type": "application/json",
-      // return-minimal = faster, no response body
-      Prefer: "return-minimal",
-    }),
-  });
+  // Delete all existing rows (small dataset, single user = OK)
+  const { error: delError } = await supabase
+    .from("appointments")
+    .delete()
+    .neq("id", -1); // delete everything
 
-  if (!del.ok) {
-    const text = await del.text();
-    console.error("Supabase DELETE error:", del.status, text);
+  if (delError) {
+    console.error("Supabase DELETE error:", delError);
     return NextResponse.json({ error: "DB delete failed" }, { status: 500 });
   }
 
-  // 2) Insert current rows (if any)
-  if (rows.length > 0) {
-    const ins = await fetch(TABLE_URL, {
-      method: "POST",
-      headers: sbHeaders({
-        "Content-Type": "application/json",
-        Prefer: "return-minimal",
-      }),
-      body: JSON.stringify(rows),
-    });
+  if (rows.length === 0) {
+    return NextResponse.json({ ok: true });
+  }
 
-    if (!ins.ok) {
-      const text = await ins.text();
-      console.error("Supabase INSERT error:", ins.status, text);
-      return NextResponse.json({ error: "DB insert failed" }, { status: 500 });
-    }
+  const { error: insError } = await supabase
+    .from("appointments")
+    .insert(rows);
+
+  if (insError) {
+    console.error("Supabase INSERT error:", insError);
+    return NextResponse.json({ error: "DB insert failed" }, { status: 500 });
   }
 
   return NextResponse.json({ ok: true });
 }
- 
