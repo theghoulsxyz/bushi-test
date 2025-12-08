@@ -487,7 +487,7 @@ function BarberCalendarCore() {
 
               {/* Content (swipe area) */}
               <div className="mt-4 flex-1 overflow-hidden" onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd} style={swipeStyle}>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5" style={{ gridAutoRows: 'minmax(34px,1fr)' }}>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5" style={{ gridAutoRows: 'minmax(38px,1fr)' }}>
                   {(() => {
                     const dayISO = toISODate(selectedDate);
                     return DAY_SLOTS.map((time) => {
@@ -497,9 +497,9 @@ function BarberCalendarCore() {
                       const timeKey = `${dayISO}_${time}`;
                       const isArmed = armedRemove === timeKey;
                       return (
-                        <div key={timeKey} className="relative rounded-2xl bg-neutral-900/80 border border-neutral-800 px-3 py-1 flex items-center gap-3 overflow-hidden">
+                        <div key={timeKey} className="relative rounded-2xl bg-neutral-900/80 border border-neutral-800 px-3 py-1.5 flex items-center gap-3 overflow-hidden">
                           {/* Time (plain, no box) */}
-                          <div className="text-[1.05rem] md:text-[1.15rem] font-semibold tabular-nums min-w-[4.9rem] text-center select-none" style={{ fontFamily: BRAND.fontBody }}>
+                          <div className="text-[1.1rem] md:text-[1.2rem] font-semibold tabular-nums min-w-[4.9rem] text-center select-none" style={{ fontFamily: BRAND.fontBody }}>
                             {time}
                           </div>
 
@@ -516,7 +516,7 @@ function BarberCalendarCore() {
                                 }
                               }}
                               onBlur={(e) => saveName(dayISO, time, e.currentTarget.value)}
-                              className={`block w-full text-white bg-[rgb(10,10,10)] border border-neutral-700/70 focus:border-white/70 focus:outline-none focus:ring-0 rounded-lg px-3 py-1 text-center transition-all duration-200`}
+                              className={`block w-full text-white bg-[rgb(10,10,10)] border border-neutral-700/70 focus:border-white/70 focus:outline-none focus:ring-0 rounded-lg px-3 py-1.5 text-center transition-all duration-200`}
                               style={{ fontFamily: BRAND.fontBody }}
                             />
 
