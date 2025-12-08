@@ -1,4 +1,3 @@
-// v2.5 (Swipe bugfix + clean handlers): one‑day swipe, stable modals, responsive day editor
 'use client';
 // Bushi Admin — Month grid + Day editor (2-column on tablet/desktop; 1-column on mobile)
 // Clock (hours) + person names use clean sans-serif (Inter).
@@ -13,10 +12,14 @@ const BRAND = {
   shopName: 'BushiBarberShop',
   logoLight: '/bushii-logo.png',
   accent: '#ffffff',
-  fontTitle: "'Bebas Neue', sans-serif", // month + weekday labels
+  fontTitle: "'Bebas Neue', sans-serif" // month + weekday labels
+  ,
   fontNumbers: "'UnifrakturCook', cursive", // gothic for day numbers
   fontBody: "'Inter', sans-serif", // clean font for clock + person names
 };
+
+// Simple front-end PIN (not bank security, just to keep casual visitors out)
+const PIN_CODE = '2580'; // change this to your own code
 
 function injectBrandFonts() {
   if (typeof document === 'undefined') return;
@@ -71,8 +74,23 @@ function buildSlots() {
 }
 const DAY_SLOTS = buildSlots();
 
+// Utility: check if a day has any non-empty appointments
+const hasAppointmentsOn = (dayISO: string, store: Record<string, Record<string, string>>) =>
+  !!store[dayISO] && Object.values(store[dayISO]).some((v) => (v || '').trim().length > 0);
+
+// Utility: a day is "full" only when **every** slot has a non-empty name
+const isDayFull = (dayISO: string, store: Record<string, Record<string, string>>) => {
+  const day = store[dayISO];
+  if (!day) return false;
+  for (const slot of DAY_SLOTS) {
+    const v = day[slot];
+    if (!v || (v || '').trim().length === 0) return false;
+  }
+  return true;
+};
+
 // =============================================================================
-// Storage
+// Storage (local cache)
 // =============================================================================
 const LS_KEY = 'barber_appointments_v1';
 const canUseStorage = () => typeof window !== 'undefined' && typeof localStorage !== 'undefined';
@@ -90,6 +108,40 @@ const writeStore = (data: Record<string, Record<string, string>>) => {
 };
 
 // =============================================================================
+// Remote Sync (multi-device: phone + tablet + PC)
+// =============================================================================
+// NOTE: You need a backend route at this URL that reads/writes the JSON
+// shape: Record<ISODate, Record<"HH:MM", string>>
+// Example in Next.js: pages/api/appointments.ts
+const API_ENDPOINT = '/api/appointments';
+
+async function fetchRemoteStore(): Promise<Record<string, Record<string, string>> | null> {
+  if (typeof window === 'undefined') return null;
+  try {
+    const res = await fetch(API_ENDPOINT, { method: 'GET' });
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (!data || typeof data !== 'object') return null;
+    return data as Record<string, Record<string, string>>;
+  } catch {
+    return null;
+  }
+}
+
+async function pushRemoteStore(data: Record<string, Record<string, string>>): Promise<void> {
+  if (typeof window === 'undefined') return;
+  try {
+    await fetch(API_ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+  } catch {
+    // fail silently; localStorage still keeps a copy
+  }
+}
+
+// =============================================================================
 // Tiny Dev Checks (acts like test cases)
 // =============================================================================
 function runDevChecks(viewYear: number, viewMonth: number) {
@@ -99,15 +151,32 @@ function runDevChecks(viewYear: number, viewMonth: number) {
   console.assert(DAY_SLOTS.length > 0, 'Slots should not be empty');
   console.assert(matrix.flat().length >= 28 && matrix.flat().length <= 42, 'Month grid 28..42 days');
   console.assert(START_HOUR >= 0 && END_HOUR <= 24 && SLOT_MINUTES > 0, 'Slot constants sane');
+  // addDays sanity
+  const d = new Date(2025, 0, 31);
+  const d2 = addDays(d, 1);
+  console.assert(d2.getDate() === 1 && d2.getMonth() === 1, 'addDays should roll month correctly');
+  // hasAppointmentsOn sanity
+  const fakeStore: Record<string, Record<string, string>> = { '2025-01-02': { '08:00': 'A', '08:30': '' } };
+  console.assert(hasAppointmentsOn('2025-01-02', fakeStore) === true, 'hasAppointmentsOn should detect non-empty entries');
+  // isDayFull sanity
+  const fullDay: Record<string, string> = DAY_SLOTS.reduce((acc, s) => { acc[s] = 'X'; return acc; }, {} as Record<string, string>);
+  const storeFull: Record<string, Record<string, string>> = { '2025-02-02': fullDay };
+  console.assert(isDayFull('2025-02-02', storeFull) === true, 'isDayFull should be true when all slots are filled');
+  const almostFull: Record<string, string> = { ...fullDay };
+  delete almostFull[DAY_SLOTS[0]];
+  const storeAlmost: Record<string, Record<string, string>> = { '2025-02-03': almostFull };
+  console.assert(isDayFull('2025-02-03', storeAlmost) === false, 'isDayFull should be false when at least one slot is empty');
+  console.assert(hasAppointmentsOn('2025-01-02', fakeStore) === true, 'hasAppointmentsOn should detect non-empty entries');
 }
 
 // =============================================================================
 // Component
 // =============================================================================
-export default function BarbershopAdminPanel() {
+function BarberCalendarCore() {
   useEffect(() => injectBrandFonts(), []);
 
   const today = new Date();
+  const todayISO = toISODate(today);
   const [viewYear, setViewYear] = useState(today.getFullYear());
   const [viewMonth, setViewMonth] = useState(today.getMonth());
 
@@ -116,6 +185,28 @@ export default function BarbershopAdminPanel() {
 
   const [store, setStore] = useState<Record<string, Record<string, string>>>(readStore());
   useEffect(() => writeStore(store), [store]);
+
+  // Initial remote load: pull latest data from server so phone + tablet see same appointments
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const remote = await fetchRemoteStore();
+      if (!remote || cancelled) return;
+      // Merge remote over local, remote wins
+      setStore(remote);
+      writeStore(remote);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Push changes to server whenever appointments change (fire-and-forget)
+  useEffect(() => {
+    // avoid pushing empty object on very first load if nothing is set yet
+    if (!store || Object.keys(store).length === 0) return;
+    pushRemoteStore(store);
+  }, [store]);
 
   // prevent background scrolling when a modal is open
   useEffect(() => {
@@ -136,7 +227,9 @@ export default function BarbershopAdminPanel() {
 
   // swipe state for smooth left/right day navigation on touch devices
   const swipeStartX = useRef<number | null>(null);
+  const swipeStartY = useRef<number | null>(null);
   const swipeDX = useRef<number>(0);
+  const swipeDY = useRef<number>(0);
   const [swipeStyle, setSwipeStyle] = useState<React.CSSProperties>({});
   const SWIPE_THRESHOLD = 48; // px
 
@@ -153,12 +246,14 @@ export default function BarbershopAdminPanel() {
   };
 
   const animateShift = (delta: number) => {
-    // delta: -1 => left (previous), +1 => right (next)
+    // animate out
     setSwipeStyle({ transform: `translateX(${delta > 0 ? -24 : 24}px)`, opacity: 0.3, transition: 'transform 160ms ease, opacity 160ms ease' });
     setTimeout(() => {
       shiftSelectedDay(delta);
+      // instant jump opposite side
       setSwipeStyle({ transform: `translateX(${delta > 0 ? 24 : -24}px)`, opacity: 0.3, transition: 'none' });
       requestAnimationFrame(() => {
+        // animate back in
         setSwipeStyle({ transform: 'translateX(0)', opacity: 1, transition: 'transform 160ms ease, opacity 160ms ease' });
       });
     }, 160);
@@ -216,26 +311,33 @@ export default function BarbershopAdminPanel() {
     return () => window.removeEventListener('keydown', onKey);
   }, [selectedDate]);
 
-  // touch handlers for swipe inside day editor
+  // touch handlers for swipe inside day editor (ignore vertical drags)
   const onTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
     swipeStartX.current = e.touches[0].clientX;
+    swipeStartY.current = e.touches[0].clientY;
     swipeDX.current = 0;
+    swipeDY.current = 0;
     setSwipeStyle({ transition: 'none' });
   };
   const onTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
-    if (swipeStartX.current == null) return;
+    if (swipeStartX.current == null || swipeStartY.current == null) return;
     swipeDX.current = e.touches[0].clientX - swipeStartX.current;
-    setSwipeStyle({ transform: `translateX(${swipeDX.current}px)` });
+    swipeDY.current = e.touches[0].clientY - swipeStartY.current;
+    if (Math.abs(swipeDX.current) > Math.abs(swipeDY.current)) {
+      setSwipeStyle({ transform: `translateX(${swipeDX.current}px)` });
+    }
   };
   const onTouchEnd = () => {
     if (swipeStartX.current == null) return;
     const dx = swipeDX.current;
     swipeStartX.current = null;
+    swipeStartY.current = null;
     swipeDX.current = 0;
+    swipeDY.current = 0;
     if (Math.abs(dx) >= SWIPE_THRESHOLD) {
-      animateShift(dx > 0 ? -1 : 1); // exactly one day per swipe
+      // dx>0 means swipe right, go to previous day
+      animateShift(dx > 0 ? -1 : 1);
     } else {
-      // bounce back
       setSwipeStyle({ transform: 'translateX(0)', transition: 'transform 160ms ease' });
     }
   };
@@ -289,18 +391,24 @@ export default function BarbershopAdminPanel() {
             const inMonth = d.getMonth() === viewMonth;
             const key = toISODate(d);
             const num = d.getDate();
+            const isFull = isDayFull(key, store);
+            const isToday = inMonth && key === todayISO;
             const cls = [
               'rounded-2xl flex items-center justify-center bg-neutral-900 text-white border transition cursor-pointer',
               'h-full w-full aspect-square md:aspect-auto p-[clamp(6px,1vw,20px)] focus:outline-none focus:ring-2 focus:ring-white/60',
-              inMonth ? 'border-neutral-700 hover:border-white/60' : 'border-neutral-800 opacity-40',
+              !inMonth
+                ? 'border-neutral-800 opacity-40'
+                : isToday
+                  ? 'border-neutral-700'
+                  : 'border-neutral-700 hover:border-white/60',
             ].join(' ');
             return (
               <button key={key} onClick={() => openDay(d)} className={cls}>
                 <span
-                  className="select-none text-[clamp(17px,3.5vw,32px)]"
+                  className={`select-none text-[clamp(17px,3.5vw,32px)] ${isToday ? 'font-extrabold' : ''}`}
                   style={{ fontFamily: BRAND.fontNumbers }}
                 >
-                  {num}
+                  {isFull ? 'X' : num}
                 </span>
               </button>
             );
@@ -310,25 +418,49 @@ export default function BarbershopAdminPanel() {
 
       {/* Year Modal */}
       {showYear && (
-        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/80" onMouseDown={() => setShowYear(false)}>
+        <div
+          className="fixed inset-0 z-40 flex items-center justify-center bg-black/70"
+          onMouseDown={() => setShowYear(false)}
+        >
           <div
-            className="max-w-5xl w-[92vw] md:w-[900px] rounded-2xl border border-neutral-700 bg-[rgb(10,10,10)] p-4 md:p-6 shadow-2xl overflow-y-auto max-h-[88vh]"
+            className="w-[min(100%-32px,820px)] max-w-xl rounded-3xl border border-neutral-800 bg-neutral-950/95 shadow-2xl px-6 py-6 sm:px-8 sm:py-8"
             onMouseDown={(e) => e.stopPropagation()}
             onTouchStart={(e) => e.stopPropagation()}
           >
-            <div className="flex items-start justify-between">
-              <h2 className="text-3xl md:text-5xl font-bold" style={{ fontFamily: BRAND.fontTitle }}>{viewYear}</h2>
-              <button className="text-3xl md:text-4xl px-2 md:px-3" aria-label="Close" onClick={() => setShowYear(false)}>×</button>
+            {/* Header: year + close button */}
+            <div className="flex items-center justify-between gap-4">
+              <div
+                className="text-[clamp(26px,5vw,40px)] leading-none"
+                style={{ fontFamily: BRAND.fontTitle }}
+              >
+                {viewYear}
+              </div>
+              <button
+                onClick={() => setShowYear(false)}
+                className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-neutral-700/70 bg-neutral-900/80 hover:bg-neutral-800 transition"
+                aria-label="Close"
+              >
+                ✕
+              </button>
             </div>
-            <div className="mt-4 grid grid-cols-3 md:grid-cols-4 gap-3 md:gap-4">
-              {MONTHS.map((m, i) => (
+
+            {/* Months grid */}
+            <div className="mt-6 grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-4">
+              {MONTHS.map((label, idx) => (
                 <button
-                  key={m}
-                  onClick={() => { setViewMonth(i); setShowYear(false); }}
-                  className={`rounded-xl border px-4 py-3 text-center transition bg-neutral-900 hover:bg-neutral-800 ${i === viewMonth ? 'border-white/70' : 'border-neutral-700'}`}
+                  key={label}
+                  onClick={() => {
+                    setViewMonth(idx);
+                    setShowYear(false);
+                  }}
+                  className={`h-11 sm:h-12 rounded-2xl border text-[13px] sm:text-[14px] tracking-[0.12em] uppercase flex items-center justify-center transition ${
+                    idx === viewMonth
+                      ? 'border-white text-white bg-neutral-900'
+                      : 'border-neutral-700/70 text-neutral-200 bg-neutral-900/50 hover:bg-neutral-800'
+                  }`}
                   style={{ fontFamily: BRAND.fontTitle }}
                 >
-                  {m}
+                  {label}
                 </button>
               ))}
             </div>
@@ -336,99 +468,191 @@ export default function BarbershopAdminPanel() {
         </div>
       )}
 
-      {/* Day Editor Modal with arrows + swipe */}
+      {/* Day Editor Modal (swipe-only, 1-col on mobile, 2-col on tablet/desktop) */}
       {selectedDate && (
         <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/80" onMouseDown={() => setSelectedDate(null)}>
           <div
             className="max-w-6xl w-[94vw] md:w-[1100px] h-[92vh] rounded-2xl border border-neutral-700 bg-[rgb(10,10,10)] p-4 md:p-6 shadow-2xl overflow-hidden"
             onMouseDown={(e) => e.stopPropagation()}
-            onTouchStart={(e) => { e.stopPropagation(); onTouchStart(e); }}
-            onTouchMove={onTouchMove}
-            onTouchEnd={onTouchEnd}
+            onTouchStart={(e) => e.stopPropagation()}
           >
-            <div className="flex items-center justify-between gap-2">
-              <button
-                className="hidden sm:inline-flex items-center justify-center w-10 h-10 rounded-lg border border-neutral-700/60 bg-neutral-900/60 hover:bg-neutral-800"
-                aria-label="Previous day"
-                onClick={goPrevDay}
-              >
-                ◀
-              </button>
-              <h3 className="flex-1 text-2xl md:text-3xl font-bold text-center" style={{ fontFamily: BRAND.fontTitle }}>
-                {WEEKDAYS_SHORT[(selectedDate.getDay() + 6) % 7]} {selectedDate.getDate()} {MONTHS[selectedDate.getMonth()]} {selectedDate.getFullYear()}
-              </h3>
-              <div className="flex items-center gap-2">
-                <button
-                  className="hidden sm:inline-flex items-center justify-center w-10 h-10 rounded-lg border border-neutral-700/60 bg-neutral-900/60 hover:bg-neutral-800"
-                  aria-label="Next day"
-                  onClick={goNextDay}
-                >
-                  ▶
-                </button>
+            <div className="flex h-full flex-col">
+              {/* Header */}
+              <div className="flex items-center justify-between">
+                <h3 className="text-2xl md:text-3xl font-bold" style={{ fontFamily: BRAND.fontTitle }}>
+                  {WEEKDAYS_SHORT[(selectedDate.getDay() + 6) % 7]} {selectedDate.getDate()} {MONTHS[selectedDate.getMonth()]} {selectedDate.getFullYear()}
+                </h3>
                 <button className="text-2xl md:text-3xl px-2 md:px-3" aria-label="Close" onClick={() => setSelectedDate(null)}>×</button>
               </div>
-            </div>
 
-            {/* Two-column on md+, single column on mobile; swipe area */}
-            <div
-              className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-3 overflow-y-auto md:overflow-hidden"
-              style={{ ...swipeStyle, maxHeight: 'calc(92vh - 80px)', gridAutoRows: 'minmax(46px,1fr)' }}
-            >
-              {(() => {
-                const dayISO = toISODate(selectedDate);
-                return DAY_SLOTS.map((time) => {
-                  const value = (store[dayISO] && store[dayISO][time]) || '';
-                  const hasName = (value || '').trim().length > 0;
-                  const isSaved = savedPulse && savedPulse.day === dayISO && savedPulse.time === time;
-                  const timeKey = `${dayISO}_${time}`;
-                  const isArmed = armedRemove === timeKey;
-                  return (
-                    <div key={timeKey} className="relative rounded-2xl bg-neutral-900/80 border border-neutral-800 px-3 py-1.5 flex items-center gap-3 overflow-hidden">
-                      {/* Time (plain, no box) */}
-                      <div className="text-[1.2rem] md:text-[1.28rem] font-semibold tabular-nums min-w-[4.9rem] text-center select-none" style={{ fontFamily: BRAND.fontBody }}>{time}</div>
+              {/* Content (swipe area) */}
+              <div className="mt-4 flex-1 overflow-y-auto md:overflow-hidden" onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd} style={swipeStyle}>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3" style={{ gridAutoRows: 'minmax(46px,1fr)' }}>
+                  {(() => {
+                    const dayISO = toISODate(selectedDate);
+                    return DAY_SLOTS.map((time) => {
+                      const value = (store[dayISO] && store[dayISO][time]) || '';
+                      const hasName = (value || '').trim().length > 0;
+                      const isSaved = !!(savedPulse && savedPulse.day === dayISO && savedPulse.time === time);
+                      const timeKey = `${dayISO}_${time}`;
+                      const isArmed = armedRemove === timeKey;
+                      return (
+                        <div key={timeKey} className="relative rounded-2xl bg-neutral-900/80 border border-neutral-800 px-3 py-1.5 flex items-center gap-3 overflow-hidden">
+                          {/* Time (plain, no box) */}
+                          <div className="text-[1.15rem] md:text-[1.25rem] font-semibold tabular-nums min-w-[4.9rem] text-center select-none" style={{ fontFamily: BRAND.fontBody }}>
+                            {time}
+                          </div>
 
-                      {/* Name input */}
-                      <input
-                        key={timeKey + value}
-                        defaultValue={value}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') {
-                            const v = (e.target as HTMLInputElement).value;
-                            saveName(dayISO, time, v);
-                            (e.target as HTMLInputElement).blur();
-                          }
-                        }}
-                        onBlur={(e) => saveName(dayISO, time, e.currentTarget.value)}
-                        className={`flex-1 min-w-0 text-white bg-[rgb(10,10,10)] border border-neutral-700/70 focus:border-white/70 focus:outline-none focus:ring-0 rounded-lg px-3 py-1.5 text-center transition-all duration-200`}
-                        style={{ fontFamily: BRAND.fontBody }}
-                      />
+                          {/* Name input */}
+                          <div className="flex-1 min-w-0 flex items-center gap-2">
+                            <input
+                              key={timeKey + value}
+                              defaultValue={value}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  const v = (e.target as HTMLInputElement).value;
+                                  saveName(dayISO, time, v);
+                                  (e.target as HTMLInputElement).blur();
+                                }
+                              }}
+                              onBlur={(e) => saveName(dayISO, time, e.currentTarget.value)}
+                              className={`block w-full text-white bg-[rgb(10,10,10)] border border-neutral-700/70 focus:border-white/70 focus:outline-none focus:ring-0 rounded-lg px-3 py-1.5 text-center transition-all duration-200`}
+                              style={{ fontFamily: BRAND.fontBody }}
+                            />
 
-                      {/* Remove / Confirm button on the right (outside input but inside row) */}
-                      {hasName && (
-                        <button
-                          onClick={() => (isArmed ? confirmRemove(dayISO, time) : armRemove(timeKey))}
-                          className={`shrink-0 w-9 h-9 md:w-9 md:h-9 rounded-lg grid place-items-center transition border ${isArmed ? 'bg-red-900/30 border-red-600/70' : 'bg-neutral-900/60 hover:bg-neutral-800/70 border-neutral-700/50'}`}
-                          aria-label={isArmed ? 'Confirm remove' : 'Remove'}
-                        >
-                          <img src={isArmed ? '/tick-green.png' : '/razor.png'} alt={isArmed ? 'Confirm' : 'Remove'} className="w-4 h-4 md:w-5 md:h-5 object-contain" />
-                        </button>
-                      )}
+                            {/* Remove / Confirm button (outside input, right side) */}
+                            {hasName && (
+                              <button
+                                onClick={() => (isArmed ? confirmRemove(dayISO, time) : armRemove(timeKey))}
+                                className={`shrink-0 w-8 h-8 md:w-9 md:h-9 rounded-lg grid place-items-center transition border ${isArmed ? 'bg-red-900/30 border-red-600/70' : 'bg-neutral-900/60 hover:bg-neutral-800/70 border-neutral-700/50'}`}
+                                aria-label={isArmed ? 'Confirm remove' : 'Remove'}
+                              >
+                                <img src={isArmed ? '/tick-green.png' : '/razor.png'} alt={isArmed ? 'Confirm' : 'Remove'} className="w-4 h-4 md:w-5 md:h-5 object-contain" />
+                              </button>
+                            )}
+                          </div>
 
-                      {/* Saved tick (floats inside the row, non-interactive) */}
-                      <img
-                        src="/tick-green.png"
-                        alt="saved"
-                        className={`pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 transition-opacity duration-300 ${isSaved ? 'opacity-100' : 'opacity-0'}`}
-                        style={{ width: 20, height: 20 }}
-                      />
-                    </div>
-                  );
-                });
-              })()}
+                          {/* Saved pulse (floats over the right side) */}
+                          <img
+                            src="/tick-green.png"
+                            alt="saved"
+                            className={`pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 md:w-6 md:h-6 transition-opacity duration-300 ${isSaved ? 'opacity-100' : 'opacity-0'}`}
+                          />
+                        </div>
+                      );
+                    });
+                  })()}
+                </div>
+              </div>
             </div>
           </div>
         </div>
       )}
     </div>
   );
+}
+
+// =============================================================================
+// PIN-locked wrapper (for Netlify / public URL)
+// =============================================================================
+export default function BarbershopAdminPanel() {
+  const [unlocked, setUnlocked] = useState(false);
+  const [pin, setPin] = useState('');
+  const [error, setError] = useState('');
+
+  // On first load, check if this browser tab was already unlocked
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    // In preview / dev, always ask for the PIN again.
+    // In production (Netlify), remember unlock per device.
+    if (process.env.NODE_ENV === 'production' && localStorage.getItem('bushi_unlocked') === '1') {
+      setUnlocked(true);
+    }
+  }, []);
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (pin === PIN_CODE) {
+      setUnlocked(true);
+      setError('');
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('bushi_unlocked', '1');
+      }
+    } else {
+      setError('Wrong PIN');
+    }
+  };
+
+  if (!unlocked) {
+    return (
+      <div className="fixed inset-0 flex items-center justify-center bg-black text-white overflow-hidden">
+        {/* Ambient glow background */}
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(255,255,255,0.16)_0,_transparent_55%),radial-gradient(circle_at_bottom,_rgba(255,255,255,0.12)_0,_transparent_55%)]" />
+
+        {/* Card */}
+        <div className="relative w-[min(100%-40px,420px)] rounded-[32px] border border-white/10 bg-[rgba(8,8,8,0.9)] backdrop-blur-xl px-7 py-8 shadow-[0_24px_80px_rgba(0,0,0,0.9)]">
+          {/* Small label */}
+          <div className="mb-4 flex justify-center">
+            <span
+              className="inline-flex items-center justify-center rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[10px] uppercase tracking-[0.22em] text-neutral-300"
+              style={{ fontFamily: BRAND.fontBody }}
+            >
+              Admin Access
+            </span>
+          </div>
+
+          {/* Logo wordmark */}
+          <div className="mb-4 flex justify-center">
+            <img
+              src="/bush.png"
+              alt="Bushi logo"
+              className="max-h-16 w-auto object-contain"
+            />
+          </div>
+          <p
+            className="text-xs text-neutral-400 text-center mb-6"
+            style={{ fontFamily: BRAND.fontBody }}
+          >
+            Enter your PIN to open the schedule.
+          </p>
+
+          <form onSubmit={handleSubmit} className="space-y-4">
+            {/* Input wrapper */}
+          <div className="rounded-2xl bg-neutral-900/80 border border-white/12 px-4 py-3 flex items-center focus-within:border-white/70 transition">
+            <input
+              type="password"
+              inputMode="numeric"
+              autoComplete="off"
+              value={pin}
+              onChange={(e) => setPin(e.target.value)}
+              maxLength={6}
+              className="w-full bg-transparent border-none outline-none text-center text-lg tracking-[0.35em] placeholder:text-neutral-600"
+              style={{ fontFamily: BRAND.fontBody }}
+              placeholder="••••"
+            />
+          </div>
+
+            {error && (
+              <div
+                className="text-xs text-red-400 text-center"
+                style={{ fontFamily: BRAND.fontBody }}
+              >
+                {error}
+              </div>
+            )}
+
+            <button
+              type="submit"
+              className="w-full rounded-2xl bg-white text-black font-semibold py-2.5 text-sm tracking-[0.16em] uppercase hover:bg-neutral-200 active:bg-neutral-300 transition shadow-[0_10px_30px_rgba(0,0,0,0.7)]"
+              style={{ fontFamily: BRAND.fontBody }}
+            >
+              Unlock
+            </button>
+          </form>
+        </div>
+      </div>
+    );
+  }
+
+  return <BarberCalendarCore />;
 }
