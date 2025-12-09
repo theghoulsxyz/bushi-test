@@ -288,8 +288,13 @@ function BarberCalendarCore() {
     [viewYear, viewMonth],
   );
 
+  // ⬇️ NEW: allow clicking grey days, and update month/year when they are from prev/next month
   const openDay = (d: Date) => {
-    if (d.getMonth() === viewMonth) setSelectedDate(d);
+    if (d.getFullYear() !== viewYear || d.getMonth() !== viewMonth) {
+      setViewYear(d.getFullYear());
+      setViewMonth(d.getMonth());
+    }
+    setSelectedDate(d);
   };
 
   const monthLabel = `${MONTHS[viewMonth]} ${viewYear}`;
@@ -456,7 +461,7 @@ function BarberCalendarCore() {
               'rounded-2xl flex items-center justify-center bg-neutral-900 text-white border transition cursor-pointer',
               'h-full w-full aspect-square md:aspect-auto p-[clamp(6px,1vw,20px)] focus:outline-none focus:ring-2 focus:ring-white/60',
               !inMonth
-                ? 'border-neutral-800 opacity-40'
+                ? 'border-neutral-800 opacity-40 hover:opacity-70'
                 : isToday
                   ? 'border-neutral-700'
                   : 'border-neutral-700 hover:border-white/60',
@@ -492,12 +497,29 @@ function BarberCalendarCore() {
             onMouseDown={(e) => e.stopPropagation()}
             onTouchStart={(e) => e.stopPropagation()}
           >
+            {/* Header: year +/- + close */}
             <div className="flex items-center justify-between gap-4">
-              <div
-                className="text-[clamp(26px,5vw,40px)] leading-none"
-                style={{ fontFamily: BRAND.fontTitle }}
-              >
-                {viewYear}
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => setViewYear((y) => y - 1)}
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-neutral-700/70 bg-neutral-900/80 hover:bg-neutral-800 text-sm"
+                  aria-label="Previous year"
+                >
+                  ‹
+                </button>
+                <div
+                  className="text-[clamp(26px,5vw,40px)] leading-none"
+                  style={{ fontFamily: BRAND.fontTitle }}
+                >
+                  {viewYear}
+                </div>
+                <button
+                  onClick={() => setViewYear((y) => y + 1)}
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-neutral-700/70 bg-neutral-900/80 hover:bg-neutral-800 text-sm"
+                  aria-label="Next year"
+                >
+                  ›
+                </button>
               </div>
               <button
                 onClick={() => setShowYear(false)}
@@ -508,10 +530,11 @@ function BarberCalendarCore() {
               </button>
             </div>
 
+            {/* Months grid */}
             <div className="mt-6 grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-4">
               {MONTHS.map((label, idx) => (
                 <button
-                  key={label}
+                  key={label + viewYear}
                   onClick={() => {
                     setViewMonth(idx);
                     setShowYear(false);
@@ -576,7 +599,7 @@ function BarberCalendarCore() {
               >
                 <div
                   className="grid grid-cols-1 sm:grid-cols-2 gap-2.5"
-                  style={{ gridAutoRows: 'minmax(32px,1fr)' }}  // ⬅️ shorter rows
+                  style={{ gridAutoRows: 'minmax(32px,1fr)' }}
                 >
                   {(() => {
                     const dayISO = toISODate(selectedDate);
@@ -595,7 +618,7 @@ function BarberCalendarCore() {
                       return (
                         <div
                           key={timeKey}
-                          className="relative rounded-2xl bg-neutral-900/80 border border-neutral-800 px-3 py-1 flex items-center gap-3 overflow-hidden" // ⬅️ py-1
+                          className="relative rounded-2xl bg-neutral-900/80 border border-neutral-800 px-3 py-1 flex items-center gap-3 overflow-hidden"
                         >
                           <div
                             className="text-[1.05rem] md:text-[1.15rem] font-semibold tabular-nums min-w-[4.9rem] text-center select-none"
