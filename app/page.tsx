@@ -576,7 +576,7 @@ function BarberCalendarCore() {
               >
                 <div
                   className="grid grid-cols-1 sm:grid-cols-2 gap-2.5"
-                  style={{ gridAutoRows: 'minmax(34px,1fr)' }}
+                  style={{ gridAutoRows: 'minmax(32px,1fr)' }}  // ⬅️ shorter rows
                 >
                   {(() => {
                     const dayISO = toISODate(selectedDate);
@@ -595,7 +595,7 @@ function BarberCalendarCore() {
                       return (
                         <div
                           key={timeKey}
-                          className="relative rounded-2xl bg-neutral-900/80 border border-neutral-800 px-3 py-1.5 flex items-center gap-3 overflow-hidden"
+                          className="relative rounded-2xl bg-neutral-900/80 border border-neutral-800 px-3 py-1 flex items-center gap-3 overflow-hidden" // ⬅️ py-1
                         >
                           <div
                             className="text-[1.05rem] md:text-[1.15rem] font-semibold tabular-nums min-w-[4.9rem] text-center select-none"
