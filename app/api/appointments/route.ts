@@ -1,91 +1,120 @@
-// app/api/appointments/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
 type Store = Record<string, Record<string, string>>;
 
-const supabaseUrl = process.env.SUPABASE_URL!;
-const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+const SUPABASE_URL = process.env.SUPABASE_URL!;
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
-const supabase = createClient(supabaseUrl, serviceRoleKey, {
-  auth: { persistSession: false },
-});
-
-// ---------- GET: read all rows and return Store ----------
-export async function GET() {
-  if (!supabaseUrl || !serviceRoleKey) {
-    console.error("Missing Supabase env vars");
-    return NextResponse.json({}, { status: 500 });
-  }
-
-  const { data, error } = await supabase
-    .from("appointments")
-    .select("day, time, name");
-
-  if (error) {
-    console.error("Supabase GET error:", error);
-    return NextResponse.json({}, { status: 500 });
-  }
-
-  const store: Store = {};
-  for (const row of (data || []) as { day: string; time: string; name: string | null }[]) {
-    if (!row.day || !row.time) continue;
-    if (!store[row.day]) store[row.day] = {};
-    if (row.name && row.name.trim()) {
-      store[row.day][row.time] = row.name.trim();
-    }
-  }
-
-  return NextResponse.json(store);
+if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+  throw new Error(
+    "Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY environment variables",
+  );
 }
 
-// ---------- POST: replace DB content with sent Store ----------
-export async function POST(req: NextRequest) {
-  if (!supabaseUrl || !serviceRoleKey) {
-    console.error("Missing Supabase env vars");
-    return NextResponse.json({ error: "Missing env vars" }, { status: 500 });
-  }
+const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
-  let body: Store;
+// -----------------------------------------------------------------------------
+// GET  /api/appointments
+// Returns full calendar as: { "2025-12-01": { "08:00": "Name", ... }, ... }
+// -----------------------------------------------------------------------------
+export async function GET() {
   try {
-    body = (await req.json()) as Store;
-  } catch {
-    return NextResponse.json({ error: "Bad JSON" }, { status: 400 });
-  }
+    const { data, error } = await supabase
+      .from("appointments")
+      .select("day,time,name");
 
-  // Flatten { day: { time: name } } -> [{ day, time, name }, ...]
-  const rows: { day: string; time: string; name: string }[] = [];
-  for (const [day, slots] of Object.entries(body)) {
-    for (const [time, name] of Object.entries(slots)) {
-      const trimmed = (name || "").trim();
-      if (!trimmed) continue;
-      rows.push({ day, time, name: trimmed });
+    if (error) {
+      console.error("GET /api/appointments error:", error);
+      return NextResponse.json({}, { status: 200 });
     }
+
+    const store: Store = {};
+    (data || []).forEach((row) => {
+      const d = row.day as string;
+      const t = row.time as string;
+      const n = row.name as string;
+
+      if (!d || !t) return;
+      if (!store[d]) store[d] = {};
+      store[d][t] = n || "";
+    });
+
+    return NextResponse.json(store, { status: 200 });
+  } catch (e) {
+    console.error("GET /api/appointments exception:", e);
+    return NextResponse.json({}, { status: 200 });
   }
+}
 
-  // Delete all existing rows (small dataset, single user = OK)
-  const { error: delError } = await supabase
-    .from("appointments")
-    .delete()
-    .neq("id", -1); // delete everything
+// -----------------------------------------------------------------------------
+// POST /api/appointments
+// Body: full Store object. We overwrite the entire table:
+//   1) delete all existing rows
+//   2) insert new rows for all non-empty slots
+// -----------------------------------------------------------------------------
+export async function POST(req: NextRequest) {
+  try {
+    const body = await req.json();
 
-  if (delError) {
-    console.error("Supabase DELETE error:", delError);
-    return NextResponse.json({ error: "DB delete failed" }, { status: 500 });
+    if (!body || typeof body !== "object") {
+      return NextResponse.json(
+        { error: "Invalid payload" },
+        { status: 400 },
+      );
+    }
+
+    const store = body as Store;
+
+    // Build flat list of rows to insert
+    const rows: { day: string; time: string; name: string }[] = [];
+
+    for (const day of Object.keys(store)) {
+      const slots = store[day];
+      if (!slots || typeof slots !== "object") continue;
+
+      for (const time of Object.keys(slots)) {
+        const name = (slots[time] || "").trim();
+        if (name === "") continue; // skip empty names
+        rows.push({ day, time, name });
+      }
+    }
+
+    // 1) Delete everything in appointments
+    const { error: delError } = await supabase
+      .from("appointments")
+      .delete()
+      .neq("id", -1); // simple "delete all rows"
+
+    if (delError) {
+      console.error("POST /api/appointments delete error:", delError);
+      return NextResponse.json(
+        { error: "Failed to clear existing appointments" },
+        { status: 500 },
+      );
+    }
+
+    // 2) Insert new snapshot (if there is anything)
+    if (rows.length > 0) {
+      const { error: insError } = await supabase
+        .from("appointments")
+        .insert(rows);
+
+      if (insError) {
+        console.error("POST /api/appointments insert error:", insError);
+        return NextResponse.json(
+          { error: "Failed to save appointments" },
+          { status: 500 },
+        );
+      }
+    }
+
+    return NextResponse.json({ ok: true }, { status: 200 });
+  } catch (e) {
+    console.error("POST /api/appointments exception:", e);
+    return NextResponse.json(
+      { error: "Exception while saving" },
+      { status: 500 },
+    );
   }
-
-  if (rows.length === 0) {
-    return NextResponse.json({ ok: true });
-  }
-
-  const { error: insError } = await supabase
-    .from("appointments")
-    .insert(rows);
-
-  if (insError) {
-    console.error("Supabase INSERT error:", insError);
-    return NextResponse.json({ error: "DB insert failed" }, { status: 500 });
-  }
-
-  return NextResponse.json({ ok: true });
 }
