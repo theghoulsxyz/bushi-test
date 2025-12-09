@@ -12,8 +12,7 @@ const BRAND = {
   shopName: 'BushiBarberShop',
   logoLight: '/bushii-logo.png',
   accent: '#ffffff',
-  fontTitle: "'Bebas Neue', sans-serif" // month + weekday labels
-  ,
+  fontTitle: "'Bebas Neue', sans-serif", // month + weekday labels
   fontNumbers: "'UnifrakturCook', cursive", // gothic for day numbers
   fontBody: "'Inter', sans-serif", // clean font for clock + person names
 };
@@ -74,12 +73,15 @@ function buildSlots() {
 }
 const DAY_SLOTS = buildSlots();
 
+// Utility types
+type Store = Record<string, Record<string, string>>;
+
 // Utility: check if a day has any non-empty appointments
-const hasAppointmentsOn = (dayISO: string, store: Record<string, Record<string, string>>) =>
+const hasAppointmentsOn = (dayISO: string, store: Store) =>
   !!store[dayISO] && Object.values(store[dayISO]).some((v) => (v || '').trim().length > 0);
 
 // Utility: a day is "full" only when **every** slot has a non-empty name
-const isDayFull = (dayISO: string, store: Record<string, Record<string, string>>) => {
+const isDayFull = (dayISO: string, store: Store) => {
   const day = store[dayISO];
   if (!day) return false;
   for (const slot of DAY_SLOTS) {
@@ -94,41 +96,38 @@ const isDayFull = (dayISO: string, store: Record<string, Record<string, string>>
 // =============================================================================
 const LS_KEY = 'barber_appointments_v1';
 const canUseStorage = () => typeof window !== 'undefined' && typeof localStorage !== 'undefined';
-const readStore = (): Record<string, Record<string, string>> => {
+const readStore = (): Store => {
   if (!canUseStorage()) return {};
   try {
     const raw = localStorage.getItem(LS_KEY);
-    return raw ? (JSON.parse(raw) as Record<string, Record<string, string>>) : {};
+    return raw ? (JSON.parse(raw) as Store) : {};
   } catch {
     return {};
   }
 };
-const writeStore = (data: Record<string, Record<string, string>>) => {
+const writeStore = (data: Store) => {
   if (canUseStorage()) localStorage.setItem(LS_KEY, JSON.stringify(data));
 };
 
 // =============================================================================
 // Remote Sync (multi-device: phone + tablet + PC)
 // =============================================================================
-// NOTE: You need a backend route at this URL that reads/writes the JSON
-// shape: Record<ISODate, Record<"HH:MM", string>>
-// Example in Next.js: pages/api/appointments.ts
 const API_ENDPOINT = '/api/appointments';
 
-async function fetchRemoteStore(): Promise<Record<string, Record<string, string>> | null> {
+async function fetchRemoteStore(): Promise<Store | null> {
   if (typeof window === 'undefined') return null;
   try {
-    const res = await fetch(API_ENDPOINT, { method: 'GET' });
+    const res = await fetch(API_ENDPOINT, { method: 'GET', cache: 'no-store' });
     if (!res.ok) return null;
     const data = await res.json();
     if (!data || typeof data !== 'object') return null;
-    return data as Record<string, Record<string, string>>;
+    return data as Store;
   } catch {
     return null;
   }
 }
 
-async function pushRemoteStore(data: Record<string, Record<string, string>>): Promise<void> {
+async function pushRemoteStore(data: Store): Promise<void> {
   if (typeof window === 'undefined') return;
   try {
     await fetch(API_ENDPOINT, {
@@ -151,22 +150,18 @@ function runDevChecks(viewYear: number, viewMonth: number) {
   console.assert(DAY_SLOTS.length > 0, 'Slots should not be empty');
   console.assert(matrix.flat().length >= 28 && matrix.flat().length <= 42, 'Month grid 28..42 days');
   console.assert(START_HOUR >= 0 && END_HOUR <= 24 && SLOT_MINUTES > 0, 'Slot constants sane');
-  // addDays sanity
   const d = new Date(2025, 0, 31);
   const d2 = addDays(d, 1);
   console.assert(d2.getDate() === 1 && d2.getMonth() === 1, 'addDays should roll month correctly');
-  // hasAppointmentsOn sanity
-  const fakeStore: Record<string, Record<string, string>> = { '2025-01-02': { '08:00': 'A', '08:30': '' } };
+  const fakeStore: Store = { '2025-01-02': { '08:00': 'A', '08:30': '' } };
   console.assert(hasAppointmentsOn('2025-01-02', fakeStore) === true, 'hasAppointmentsOn should detect non-empty entries');
-  // isDayFull sanity
   const fullDay: Record<string, string> = DAY_SLOTS.reduce((acc, s) => { acc[s] = 'X'; return acc; }, {} as Record<string, string>);
-  const storeFull: Record<string, Record<string, string>> = { '2025-02-02': fullDay };
+  const storeFull: Store = { '2025-02-02': fullDay };
   console.assert(isDayFull('2025-02-02', storeFull) === true, 'isDayFull should be true when all slots are filled');
   const almostFull: Record<string, string> = { ...fullDay };
   delete almostFull[DAY_SLOTS[0]];
-  const storeAlmost: Record<string, Record<string, string>> = { '2025-02-03': almostFull };
+  const storeAlmost: Store = { '2025-02-03': almostFull };
   console.assert(isDayFull('2025-02-03', storeAlmost) === false, 'isDayFull should be false when at least one slot is empty');
-  console.assert(hasAppointmentsOn('2025-01-02', fakeStore) === true, 'hasAppointmentsOn should detect non-empty entries');
 }
 
 // =============================================================================
@@ -183,27 +178,49 @@ function BarberCalendarCore() {
   const [showYear, setShowYear] = useState(false);
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
 
-  const [store, setStore] = useState<Record<string, Record<string, string>>>(readStore());
-  useEffect(() => writeStore(store), [store]);
+  // === APPOINTMENT STORE (local + remote sync) ===
+  const [store, setStore] = useState<Store>(readStore());
+  const storeRef = useRef<Store>(store);
+  useEffect(() => {
+    storeRef.current = store;
+  }, [store]);
 
-  // Initial remote load: pull latest data from server so phone + tablet see same appointments
+  // Always mirror to localStorage
+  useEffect(() => {
+    writeStore(store);
+  }, [store]);
+
+  // Pull from Supabase on load AND poll every few seconds
   useEffect(() => {
     let cancelled = false;
-    (async () => {
+
+    const syncFromRemote = async () => {
       const remote = await fetchRemoteStore();
       if (!remote || cancelled) return;
-      // Merge remote over local, remote wins
-      setStore(remote);
-      writeStore(remote);
-    })();
+
+      setStore((prev) => {
+        // Merge remote over local: remote wins per day/time, but we keep other local keys
+        const merged: Store = { ...prev };
+        for (const [day, slots] of Object.entries(remote)) {
+          merged[day] = { ...(merged[day] || {}), ...slots };
+        }
+        return merged;
+      });
+    };
+
+    // Initial sync immediately
+    syncFromRemote();
+    // Then poll every 5 seconds for cross-device updates
+    const id = setInterval(syncFromRemote, 5000);
+
     return () => {
       cancelled = true;
+      clearInterval(id);
     };
   }, []);
 
-  // Push changes to server whenever appointments change (fire-and-forget)
+  // Push local changes to server whenever appointments change
   useEffect(() => {
-    // avoid pushing empty object on very first load if nothing is set yet
     if (!store || Object.keys(store).length === 0) return;
     pushRemoteStore(store);
   }, [store]);
@@ -246,14 +263,11 @@ function BarberCalendarCore() {
   };
 
   const animateShift = (delta: number) => {
-    // animate out
     setSwipeStyle({ transform: `translateX(${delta > 0 ? -24 : 24}px)`, opacity: 0.3, transition: 'transform 160ms ease, opacity 160ms ease' });
     setTimeout(() => {
       shiftSelectedDay(delta);
-      // instant jump opposite side
       setSwipeStyle({ transform: `translateX(${delta > 0 ? 24 : -24}px)`, opacity: 0.3, transition: 'none' });
       requestAnimationFrame(() => {
-        // animate back in
         setSwipeStyle({ transform: 'translateX(0)', opacity: 1, transition: 'transform 160ms ease, opacity 160ms ease' });
       });
     }, 160);
@@ -269,7 +283,7 @@ function BarberCalendarCore() {
   const saveName = (day: string, time: string, nameRaw: string) => {
     const name = nameRaw.trim();
     setStore((prev) => {
-      const next = { ...prev };
+      const next: Store = { ...prev };
       if (!next[day]) next[day] = {};
       if (name === '') {
         if (next[day]) delete next[day][time];
@@ -286,7 +300,7 @@ function BarberCalendarCore() {
   const armRemove = (timeKey: string) => setArmedRemove(timeKey);
   const confirmRemove = (day: string, time: string) => {
     setStore((prev) => {
-      const next = { ...prev };
+      const next: Store = { ...prev };
       if (next[day]) {
         delete next[day][time];
         if (Object.keys(next[day]).length === 0) delete next[day];
@@ -296,11 +310,9 @@ function BarberCalendarCore() {
     setArmedRemove(null);
   };
 
-  // ===== Day navigation helpers (prev/next, swipe, keyboard) =====
   const goPrevDay = () => animateShift(-1);
   const goNextDay = () => animateShift(1);
 
-  // keyboard arrows when day editor is open
   useEffect(() => {
     if (!selectedDate) return;
     const onKey = (e: KeyboardEvent) => {
@@ -311,7 +323,6 @@ function BarberCalendarCore() {
     return () => window.removeEventListener('keydown', onKey);
   }, [selectedDate]);
 
-  // touch handlers for swipe inside day editor (ignore vertical drags)
   const onTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
     swipeStartX.current = e.touches[0].clientX;
     swipeStartY.current = e.touches[0].clientY;
@@ -335,7 +346,6 @@ function BarberCalendarCore() {
     swipeDX.current = 0;
     swipeDY.current = 0;
     if (Math.abs(dx) >= SWIPE_THRESHOLD) {
-      // dx>0 means swipe right, go to previous day
       animateShift(dx > 0 ? -1 : 1);
     } else {
       setSwipeStyle({ transform: 'translateX(0)', transition: 'transform 160ms ease' });
@@ -427,7 +437,6 @@ function BarberCalendarCore() {
             onMouseDown={(e) => e.stopPropagation()}
             onTouchStart={(e) => e.stopPropagation()}
           >
-            {/* Header: year + close button */}
             <div className="flex items-center justify-between gap-4">
               <div
                 className="text-[clamp(26px,5vw,40px)] leading-none"
@@ -444,7 +453,6 @@ function BarberCalendarCore() {
               </button>
             </div>
 
-            {/* Months grid */}
             <div className="mt-6 grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-4">
               {MONTHS.map((label, idx) => (
                 <button
@@ -468,7 +476,7 @@ function BarberCalendarCore() {
         </div>
       )}
 
-      {/* Day Editor Modal (swipe-only, 1-col on mobile, 2-col on tablet/desktop) */}
+      {/* Day Editor Modal */}
       {selectedDate && (
         <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/80" onMouseDown={() => setSelectedDate(null)}>
           <div
@@ -477,7 +485,6 @@ function BarberCalendarCore() {
             onTouchStart={(e) => e.stopPropagation()}
           >
             <div className="flex h-full flex-col">
-              {/* Header */}
               <div className="flex items-center justify-between">
                 <h3 className="text-2xl md:text-3xl font-bold" style={{ fontFamily: BRAND.fontTitle }}>
                   {WEEKDAYS_SHORT[(selectedDate.getDay() + 6) % 7]} {selectedDate.getDate()} {MONTHS[selectedDate.getMonth()]} {selectedDate.getFullYear()}
@@ -485,7 +492,6 @@ function BarberCalendarCore() {
                 <button className="text-2xl md:text-3xl px-2 md:px-3" aria-label="Close" onClick={() => setSelectedDate(null)}>×</button>
               </div>
 
-              {/* Content (swipe area) */}
               <div className="mt-4 flex-1 overflow-hidden" onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd} style={swipeStyle}>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5" style={{ gridAutoRows: 'minmax(38px,1fr)' }}>
                   {(() => {
@@ -498,12 +504,10 @@ function BarberCalendarCore() {
                       const isArmed = armedRemove === timeKey;
                       return (
                         <div key={timeKey} className="relative rounded-2xl bg-neutral-900/80 border border-neutral-800 px-3 py-1.5 flex items-center gap-3 overflow-hidden">
-                          {/* Time (plain, no box) */}
                           <div className="text-[1.1rem] md:text-[1.2rem] font-semibold tabular-nums min-w-[4.9rem] text-center select-none" style={{ fontFamily: BRAND.fontBody }}>
                             {time}
                           </div>
 
-                          {/* Name input */}
                           <div className="flex-1 min-w-0 flex items-center gap-2">
                             <input
                               key={timeKey + value}
@@ -516,11 +520,10 @@ function BarberCalendarCore() {
                                 }
                               }}
                               onBlur={(e) => saveName(dayISO, time, e.currentTarget.value)}
-                              className={`block w-full text-white bg-[rgb(10,10,10)] border border-neutral-700/70 focus:border-white/70 focus:outline-none focus:ring-0 rounded-lg px-3 py-1.5 text-center transition-all duration-200`}
+                              className="block w-full text-white bg-[rgb(10,10,10)] border border-neutral-700/70 focus:border-white/70 focus:outline-none focus:ring-0 rounded-lg px-3 py-1.5 text-center transition-all duration-200"
                               style={{ fontFamily: BRAND.fontBody }}
                             />
 
-                            {/* Remove / Confirm button (outside input, right side) */}
                             {hasName && (
                               <button
                                 onClick={() => (isArmed ? confirmRemove(dayISO, time) : armRemove(timeKey))}
@@ -532,7 +535,6 @@ function BarberCalendarCore() {
                             )}
                           </div>
 
-                          {/* Saved pulse (floats over the right side) */}
                           <img
                             src="/tick-green.png"
                             alt="saved"
@@ -560,11 +562,8 @@ export default function BarbershopAdminPanel() {
   const [pin, setPin] = useState('');
   const [error, setError] = useState('');
 
-  // On first load, check if this browser tab was already unlocked
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    // In preview / dev, always ask for the PIN again.
-    // In production (Netlify), remember unlock per device.
     if (process.env.NODE_ENV === 'production' && localStorage.getItem('bushi_unlocked') === '1') {
       setUnlocked(true);
     }
@@ -586,12 +585,8 @@ export default function BarbershopAdminPanel() {
   if (!unlocked) {
     return (
       <div className="fixed inset-0 flex items-center justify-center bg-black text-white overflow-hidden">
-        {/* Ambient glow background */}
         <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(255,255,255,0.16)_0,_transparent_55%),radial-gradient(circle_at_bottom,_rgba(255,255,255,0.12)_0,_transparent_55%)]" />
-
-        {/* Card */}
         <div className="relative w-[min(100%-40px,420px)] rounded-[32px] border border-white/10 bg-[rgba(8,8,8,0.9)] backdrop-blur-xl px-7 py-8 shadow-[0_24px_80px_rgba(0,0,0,0.9)]">
-          {/* Small label */}
           <div className="mb-4 flex justify-center">
             <span
               className="inline-flex items-center justify-center rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[10px] uppercase tracking-[0.22em] text-neutral-300"
@@ -601,7 +596,6 @@ export default function BarbershopAdminPanel() {
             </span>
           </div>
 
-          {/* Logo wordmark */}
           <div className="mb-4 flex justify-center">
             <img
               src="/bush.png"
@@ -617,20 +611,19 @@ export default function BarbershopAdminPanel() {
           </p>
 
           <form onSubmit={handleSubmit} className="space-y-4">
-            {/* Input wrapper */}
-          <div className="rounded-2xl bg-neutral-900/80 border border-white/12 px-4 py-3 flex items-center focus-within:border-white/70 transition">
-            <input
-              type="password"
-              inputMode="numeric"
-              autoComplete="off"
-              value={pin}
-              onChange={(e) => setPin(e.target.value)}
-              maxLength={6}
-              className="w-full bg-transparent border-none outline-none text-center text-lg tracking-[0.35em] placeholder:text-neutral-600"
-              style={{ fontFamily: BRAND.fontBody }}
-              placeholder="••••"
-            />
-          </div>
+            <div className="rounded-2xl bg-neutral-900/80 border border-white/12 px-4 py-3 flex items-center focus-within:border-white/70 transition">
+              <input
+                type="password"
+                inputMode="numeric"
+                autoComplete="off"
+                value={pin}
+                onChange={(e) => setPin(e.target.value)}
+                maxLength={6}
+                className="w-full bg-transparent border-none outline-none text-center text-lg tracking-[0.35em] placeholder:text-neutral-600"
+                style={{ fontFamily: BRAND.fontBody }}
+                placeholder="••••"
+              />
+            </div>
 
             {error && (
               <div
