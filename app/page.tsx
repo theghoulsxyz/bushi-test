@@ -177,7 +177,7 @@ function BarberCalendarCore() {
   const [store, setStore] = useState<Store>({});
   const lastLocalChangeRef = useRef<number | null>(null);
 
-  // Load from Supabase on first render AND whenever the tab/app becomes visible
+  // 🔄 Load from Supabase on first render, on visibility, and every few seconds
   useEffect(() => {
     let cancelled = false;
 
@@ -202,11 +202,15 @@ function BarberCalendarCore() {
       document.addEventListener('visibilitychange', handleVisibility);
     }
 
+    // 3) Periodic sync (approx. realtime between devices)
+    const interval = setInterval(syncFromRemote, 4000); // every 4 seconds
+
     return () => {
       cancelled = true;
       if (typeof document !== 'undefined') {
         document.removeEventListener('visibilitychange', handleVisibility);
       }
+      clearInterval(interval);
     };
   }, []);
 
@@ -515,7 +519,7 @@ function BarberCalendarCore() {
                     setViewMonth(idx);
                     setShowYear(false);
                   }}
-                  className={`h-11 sm:h-12 rounded-2xl border text-[13px] sm:text-[14px] tracking-[0.12em] uppercase flex items	center justify-center transition ${
+                  className={`h-11 sm:h-12 rounded-2xl border text-[13px] sm:text-[14px] tracking-[0.12em] uppercase flex items-center justify-center transition ${
                     idx === viewMonth
                       ? 'border-white text-white bg-neutral-900'
                       : 'border-neutral-700/70 text-neutral-200 bg-neutral-900/50 hover:bg-neutral-800'
@@ -533,11 +537,11 @@ function BarberCalendarCore() {
       {/* Day Editor Modal */}
       {selectedDate && (
         <div
-          className="fixed inset-0 z-40 flex items-center justify-center bg-black/80"
+          className="fixed inset-0 z-40 flex items=center justify-center bg-black/80"
           onMouseDown={() => setSelectedDate(null)}
         >
           <div
-            className="max-w-6xl w-[94vw] md:w-[1100px] h-[92vh] rounded-2xl border border-neutral-700 bg-[rgb(10,10,10)] p-4 md:p-6 shadow-2xl overflow-hidden"
+            className="max-w-6xl w-[94vw] md:w=[1100px] h-[92vh] rounded-2xl border border-neutral-700 bg-[rgb(10,10,10)] p-4 md:p-6 shadow-2xl overflow-hidden"
             onMouseDown={(e) => e.stopPropagation()}
             onTouchStart={(e) => e.stopPropagation()}
           >
