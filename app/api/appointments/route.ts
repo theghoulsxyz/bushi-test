@@ -3,12 +3,13 @@ import { createClient } from "@supabase/supabase-js";
 
 type Store = Record<string, Record<string, string>>;
 
+// IMPORTANT: these env names must match Netlify + .env.local
 const SUPABASE_URL = process.env.SUPABASE_URL!;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
 if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
   throw new Error(
-    "Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY environment variables",
+    "Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY environment variables"
   );
 }
 
@@ -30,14 +31,14 @@ export async function GET() {
     }
 
     const store: Store = {};
-    (data || []).forEach((row) => {
-      const d = row.day as string;
-      const t = row.time as string;
-      const n = row.name as string;
+    (data || []).forEach((row: any) => {
+      const day = row.day as string;
+      const time = row.time as string;
+      const name = row.name as string;
 
-      if (!d || !t) return;
-      if (!store[d]) store[d] = {};
-      store[d][t] = n || "";
+      if (!day || !time) return;
+      if (!store[day]) store[day] = {};
+      store[day][time] = name || "";
     });
 
     return NextResponse.json(store, { status: 200 });
@@ -60,7 +61,7 @@ export async function POST(req: NextRequest) {
     if (!body || typeof body !== "object") {
       return NextResponse.json(
         { error: "Invalid payload" },
-        { status: 400 },
+        { status: 400 }
       );
     }
 
@@ -75,26 +76,28 @@ export async function POST(req: NextRequest) {
 
       for (const time of Object.keys(slots)) {
         const name = (slots[time] || "").trim();
-        if (name === "") continue; // skip empty names
+        if (name === "") continue; // skip empty
         rows.push({ day, time, name });
       }
     }
 
-    // 1) Delete everything in appointments
+    // 1) Delete ALL rows in appointments
+    // Supabase doesn't allow completely unfiltered delete(),
+    // so we use "id IS NOT NULL" to target all rows.
     const { error: delError } = await supabase
       .from("appointments")
       .delete()
-      .neq("id", -1); // simple "delete all rows"
+      .not("id", "is", null);
 
     if (delError) {
       console.error("POST /api/appointments delete error:", delError);
       return NextResponse.json(
         { error: "Failed to clear existing appointments" },
-        { status: 500 },
+        { status: 500 }
       );
     }
 
-    // 2) Insert new snapshot (if there is anything)
+    // 2) Insert new snapshot (if any)
     if (rows.length > 0) {
       const { error: insError } = await supabase
         .from("appointments")
@@ -104,7 +107,7 @@ export async function POST(req: NextRequest) {
         console.error("POST /api/appointments insert error:", insError);
         return NextResponse.json(
           { error: "Failed to save appointments" },
-          { status: 500 },
+          { status: 500 }
         );
       }
     }
@@ -114,7 +117,7 @@ export async function POST(req: NextRequest) {
     console.error("POST /api/appointments exception:", e);
     return NextResponse.json(
       { error: "Exception while saving" },
-      { status: 500 },
+      { status: 500 }
     );
   }
 }
