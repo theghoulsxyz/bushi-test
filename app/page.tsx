@@ -302,7 +302,6 @@ function BarberCalendarCore() {
       if (!next[day]) next[day] = {};
 
       if (name === '') {
-        // delete entry
         if (next[day]) delete next[day][time];
         if (next[day] && Object.keys(next[day]).length === 0) {
           delete next[day];
@@ -312,7 +311,6 @@ function BarberCalendarCore() {
       }
 
       lastLocalChangeRef.current = Date.now();
-      // Supabase is the only storage:
       pushRemoteStore(next);
 
       return next;
@@ -394,7 +392,6 @@ function BarberCalendarCore() {
     swipeDX.current = 0;
     swipeDY.current = 0;
     if (Math.abs(dx) >= SWIPE_THRESHOLD) {
-      // dx>0 means swipe right, go to previous day
       animateShift(dx > 0 ? -1 : 1);
     } else {
       setSwipeStyle({
@@ -537,11 +534,11 @@ function BarberCalendarCore() {
       {/* Day Editor Modal */}
       {selectedDate && (
         <div
-          className="fixed inset-0 z-40 flex items=center justify-center bg-black/80"
+          className="fixed inset-0 z-40 flex items-center justify-center bg-black/80"
           onMouseDown={() => setSelectedDate(null)}
         >
           <div
-            className="max-w-6xl w-[94vw] md:w=[1100px] h-[92vh] rounded-2xl border border-neutral-700 bg-[rgb(10,10,10)] p-4 md:p-6 shadow-2xl overflow-hidden"
+            className="max-w-6xl w-[94vw] md:w-[1100px] h-[90vh] rounded-2xl border border-neutral-700 bg-[rgb(10,10,10)] p-4 md:p-6 shadow-2xl overflow-hidden"
             onMouseDown={(e) => e.stopPropagation()}
             onTouchStart={(e) => e.stopPropagation()}
           >
@@ -569,8 +566,9 @@ function BarberCalendarCore() {
                 </button>
               </div>
 
+              {/* Content area: scrollable on phone, fixed on tablet/desktop */}
               <div
-                className="mt-4 flex-1 overflow-hidden"
+                className="mt-4 flex-1 overflow-y-auto md:overflow-visible"
                 onTouchStart={onTouchStart}
                 onTouchMove={onTouchMove}
                 onTouchEnd={onTouchEnd}
@@ -578,7 +576,7 @@ function BarberCalendarCore() {
               >
                 <div
                   className="grid grid-cols-1 sm:grid-cols-2 gap-2.5"
-                  style={{ gridAutoRows: 'minmax(38px,1fr)' }}
+                  style={{ gridAutoRows: 'minmax(34px,1fr)' }}
                 >
                   {(() => {
                     const dayISO = toISODate(selectedDate);
@@ -600,7 +598,7 @@ function BarberCalendarCore() {
                           className="relative rounded-2xl bg-neutral-900/80 border border-neutral-800 px-3 py-1.5 flex items-center gap-3 overflow-hidden"
                         >
                           <div
-                            className="text-[1.1rem] md:text-[1.2rem] font-semibold tabular-nums min-w-[4.9rem] text-center select-none"
+                            className="text-[1.05rem] md:text-[1.15rem] font-semibold tabular-nums min-w-[4.9rem] text-center select-none"
                             style={{ fontFamily: BRAND.fontBody }}
                           >
                             {time}
