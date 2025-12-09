@@ -1,6 +1,5 @@
 'use client';
 // Bushi Admin — Month grid + Day editor (2-column on tablet/desktop; 1-column on mobile)
-// Clock (hours) + person names use clean sans-serif (Inter).
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 
@@ -35,8 +34,10 @@ function injectBrandFonts() {
 // Helpers
 // =============================================================================
 const pad = (n: number) => (n < 10 ? `0${n}` : `${n}`);
-const toISODate = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-const addDays = (d: Date, delta: number) => new Date(d.getFullYear(), d.getMonth(), d.getDate() + delta);
+const toISODate = (d: Date) =>
+  `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const addDays = (d: Date, delta: number) =>
+  new Date(d.getFullYear(), d.getMonth(), d.getDate() + delta);
 
 function monthMatrix(year: number, month: number) {
   const first = new Date(year, month, 1);
@@ -54,8 +55,18 @@ function monthMatrix(year: number, month: number) {
 
 const WEEKDAYS_SHORT = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
 const MONTHS = [
-  'January', 'February', 'March', 'April', 'May', 'June',
-  'July', 'August', 'September', 'October', 'November', 'December',
+  'January',
+  'February',
+  'March',
+  'April',
+  'May',
+  'June',
+  'July',
+  'August',
+  'September',
+  'October',
+  'November',
+  'December',
 ];
 
 // =============================================================================
@@ -64,6 +75,7 @@ const MONTHS = [
 const START_HOUR = 8;
 const END_HOUR = 22; // day ends at 22:00, last slot 21:30
 const SLOT_MINUTES = 30;
+
 function buildSlots() {
   const out: string[] = [];
   for (let h = START_HOUR; h < END_HOUR; h++) {
@@ -71,14 +83,11 @@ function buildSlots() {
   }
   return out;
 }
+
 const DAY_SLOTS = buildSlots();
 
-// Utility types
+// Types
 type Store = Record<string, Record<string, string>>;
-
-// Utility: check if a day has any non-empty appointments
-const hasAppointmentsOn = (dayISO: string, store: Store) =>
-  !!store[dayISO] && Object.values(store[dayISO]).some((v) => (v || '').trim().length > 0);
 
 // Utility: a day is "full" only when **every** slot has a non-empty name
 const isDayFull = (dayISO: string, store: Store) => {
@@ -95,7 +104,9 @@ const isDayFull = (dayISO: string, store: Store) => {
 // Storage (local cache)
 // =============================================================================
 const LS_KEY = 'barber_appointments_v1';
-const canUseStorage = () => typeof window !== 'undefined' && typeof localStorage !== 'undefined';
+const canUseStorage = () =>
+  typeof window !== 'undefined' && typeof localStorage !== 'undefined';
+
 const readStore = (): Store => {
   if (!canUseStorage()) return {};
   try {
@@ -105,12 +116,13 @@ const readStore = (): Store => {
     return {};
   }
 };
+
 const writeStore = (data: Store) => {
   if (canUseStorage()) localStorage.setItem(LS_KEY, JSON.stringify(data));
 };
 
 // =============================================================================
- // Remote Sync (multi-device: phone + tablet + PC)
+// Remote Sync (multi-device: phone + tablet + PC)
 // =============================================================================
 const API_ENDPOINT = '/api/appointments';
 
@@ -146,26 +158,30 @@ async function pushRemoteStore(data: Store): Promise<void> {
 function runDevChecks(viewYear: number, viewMonth: number) {
   const matrix = monthMatrix(viewYear, viewMonth);
   console.assert(WEEKDAYS_SHORT.length === 7, 'Weekday labels must be 7');
-  console.assert(matrix.length >= 4 && matrix.length <= 6, 'Month matrix rows out of range');
+  console.assert(
+    matrix.length >= 4 && matrix.length <= 6,
+    'Month matrix rows out of range',
+  );
   console.assert(DAY_SLOTS.length > 0, 'Slots should not be empty');
-  console.assert(matrix.flat().length >= 28 && matrix.flat().length <= 42, 'Month grid 28..42 days');
-  console.assert(START_HOUR >= 0 && END_HOUR <= 24 && SLOT_MINUTES > 0, 'Slot constants sane');
+  console.assert(
+    matrix.flat().length >= 28 && matrix.flat().length <= 42,
+    'Month grid 28..42 days',
+  );
+  console.assert(
+    START_HOUR >= 0 && END_HOUR <= 24 && SLOT_MINUTES > 0,
+    'Slot constants sane',
+  );
+
   const d = new Date(2025, 0, 31);
   const d2 = addDays(d, 1);
-  console.assert(d2.getDate() === 1 && d2.getMonth() === 1, 'addDays should roll month correctly');
-  const fakeStore: Store = { '2025-01-02': { '08:00': 'A', '08:30': '' } };
-  console.assert(hasAppointmentsOn('2025-01-02', fakeStore) === true, 'hasAppointmentsOn should detect non-empty entries');
-  const fullDay: Record<string, string> = DAY_SLOTS.reduce((acc, s) => { acc[s] = 'X'; return acc; }, {} as Record<string, string>);
-  const storeFull: Store = { '2025-02-02': fullDay };
-  console.assert(isDayFull('2025-02-02', storeFull) === true, 'isDayFull should be true when all slots are filled');
-  const almostFull: Record<string, string> = { ...fullDay };
-  delete almostFull[DAY_SLOTS[0]];
-  const storeAlmost: Store = { '2025-02-03': almostFull };
-  console.assert(isDayFull('2025-02-03', storeAlmost) === false, 'isDayFull should be false when at least one slot is empty');
+  console.assert(
+    d2.getDate() === 1 && d2.getMonth() === 1,
+    'addDays should roll month correctly',
+  );
 }
 
 // =============================================================================
-// Component
+// Main Calendar Component
 // =============================================================================
 function BarberCalendarCore() {
   useEffect(() => injectBrandFonts(), []);
@@ -181,7 +197,10 @@ function BarberCalendarCore() {
   // === APPOINTMENT STORE (local + remote sync) ===
   const [store, setStore] = useState<Store>(readStore());
 
-  // Always mirror to localStorage
+  // Track when user last changed something, to avoid poll instantly overwriting it
+  const lastLocalChangeRef = useRef<number | null>(null);
+
+  // Mirror to localStorage
   useEffect(() => {
     writeStore(store);
   }, [store]);
@@ -194,8 +213,18 @@ function BarberCalendarCore() {
       const remote = await fetchRemoteStore();
       if (!remote || cancelled) return;
 
+      const now = Date.now();
+      // If we just changed something locally in last 2s, skip this poll
+      if (
+        lastLocalChangeRef.current &&
+        now - lastLocalChangeRef.current < 2000
+      ) {
+        return;
+      }
+
       // Remote is the source of truth: replace local store with remote snapshot
       setStore(remote);
+      writeStore(remote);
     };
 
     // Initial sync immediately
@@ -209,12 +238,6 @@ function BarberCalendarCore() {
     };
   }, []);
 
-  // Push local changes to server whenever appointments change
-  useEffect(() => {
-    if (!store || Object.keys(store).length === 0) return;
-    pushRemoteStore(store);
-  }, [store]);
-
   // prevent background scrolling when a modal is open
   useEffect(() => {
     if (typeof document === 'undefined') return;
@@ -225,12 +248,18 @@ function BarberCalendarCore() {
     };
   }, [showYear, selectedDate]);
 
+  // Dev checks
   useEffect(() => {
-    if (process.env.NODE_ENV !== 'production') runDevChecks(viewYear, viewMonth);
+    if (process.env.NODE_ENV !== 'production')
+      runDevChecks(viewYear, viewMonth);
   }, [viewYear, viewMonth]);
 
   const [armedRemove, setArmedRemove] = useState<string | null>(null);
-  const [savedPulse, setSavedPulse] = useState<{ day: string; time: string; ts: number } | null>(null);
+  const [savedPulse, setSavedPulse] = useState<{
+    day: string;
+    time: string;
+    ts: number;
+  } | null>(null);
 
   // swipe state for smooth left/right day navigation on touch devices
   const swipeStartX = useRef<number | null>(null);
@@ -244,7 +273,10 @@ function BarberCalendarCore() {
     setSelectedDate((prev) => {
       if (!prev) return prev;
       const next = addDays(prev, delta);
-      if (next.getFullYear() !== viewYear || next.getMonth() !== viewMonth) {
+      if (
+        next.getFullYear() !== viewYear ||
+        next.getMonth() !== viewMonth
+      ) {
         setViewYear(next.getFullYear());
         setViewMonth(next.getMonth());
       }
@@ -253,66 +285,115 @@ function BarberCalendarCore() {
   };
 
   const animateShift = (delta: number) => {
-    setSwipeStyle({ transform: `translateX(${delta > 0 ? -24 : 24}px)`, opacity: 0.3, transition: 'transform 160ms ease, opacity 160ms ease' });
+    setSwipeStyle({
+      transform: `translateX(${delta > 0 ? -24 : 24}px)`,
+      opacity: 0.3,
+      transition: 'transform 160ms ease, opacity 160ms ease',
+    });
     setTimeout(() => {
       shiftSelectedDay(delta);
-      setSwipeStyle({ transform: `translateX(${delta > 0 ? 24 : -24}px)`, opacity: 0.3, transition: 'none' });
+      setSwipeStyle({
+        transform: `translateX(${delta > 0 ? 24 : -24}px)`,
+        opacity: 0.3,
+        transition: 'none',
+      });
       requestAnimationFrame(() => {
-        setSwipeStyle({ transform: 'translateX(0)', opacity: 1, transition: 'transform 160ms ease, opacity 160ms ease' });
+        setSwipeStyle({
+          transform: 'translateX(0)',
+          opacity: 1,
+          transition: 'transform 160ms ease, opacity 160ms ease',
+        });
       });
     }, 160);
   };
 
-  const matrix = useMemo(() => monthMatrix(viewYear, viewMonth), [viewYear, viewMonth]);
+  const matrix = useMemo(
+    () => monthMatrix(viewYear, viewMonth),
+    [viewYear, viewMonth],
+  );
 
   const openDay = (d: Date) => {
     if (d.getMonth() === viewMonth) setSelectedDate(d);
   };
+
   const monthLabel = `${MONTHS[viewMonth]} ${viewYear}`;
 
+  // ===== Save / Delete with synced push =====
   const saveName = (day: string, time: string, nameRaw: string) => {
     const name = nameRaw.trim();
     setStore((prev) => {
       const next: Store = { ...prev };
       if (!next[day]) next[day] = {};
+
       if (name === '') {
+        // delete entry
         if (next[day]) delete next[day][time];
-        if (next[day] && Object.keys(next[day]).length === 0) delete next[day];
+        if (next[day] && Object.keys(next[day]).length === 0) {
+          delete next[day];
+        }
       } else {
         next[day][time] = name;
       }
+
+      // Mark local change & push to server
+      lastLocalChangeRef.current = Date.now();
+      pushRemoteStore(next);
+
       return next;
     });
+
     setSavedPulse({ day, time, ts: Date.now() });
-    setTimeout(() => setSavedPulse((p) => (p && p.day === day && p.time === time ? null : p)), 900);
+    setTimeout(() => {
+      setSavedPulse((p) =>
+        p && p.day === day && p.time === time ? null : p,
+      );
+    }, 900);
     setArmedRemove(null);
   };
+
   const armRemove = (timeKey: string) => setArmedRemove(timeKey);
+
   const confirmRemove = (day: string, time: string) => {
     setStore((prev) => {
       const next: Store = { ...prev };
       if (next[day]) {
         delete next[day][time];
-        if (Object.keys(next[day]).length === 0) delete next[day];
+        if (Object.keys(next[day]).length === 0) {
+          delete next[day];
+        }
       }
+
+      // Mark local change & push to server (including full clear)
+      lastLocalChangeRef.current = Date.now();
+      pushRemoteStore(next);
+
       return next;
     });
     setArmedRemove(null);
   };
 
+  // Day navigation helpers
   const goPrevDay = () => animateShift(-1);
   const goNextDay = () => animateShift(1);
 
+  // keyboard arrows when day editor is open
   useEffect(() => {
     if (!selectedDate) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'ArrowLeft') { e.preventDefault(); goPrevDay(); }
-      if (e.key === 'ArrowRight') { e.preventDefault(); goNextDay(); }
+      if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        goPrevDay();
+      }
+      if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        goNextDay();
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [selectedDate]);
 
+  // touch handlers for swipe inside day editor (ignore vertical drags)
   const onTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
     swipeStartX.current = e.touches[0].clientX;
     swipeStartY.current = e.touches[0].clientY;
@@ -320,6 +401,7 @@ function BarberCalendarCore() {
     swipeDY.current = 0;
     setSwipeStyle({ transition: 'none' });
   };
+
   const onTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
     if (swipeStartX.current == null || swipeStartY.current == null) return;
     swipeDX.current = e.touches[0].clientX - swipeStartX.current;
@@ -328,6 +410,7 @@ function BarberCalendarCore() {
       setSwipeStyle({ transform: `translateX(${swipeDX.current}px)` });
     }
   };
+
   const onTouchEnd = () => {
     if (swipeStartX.current == null) return;
     const dx = swipeDX.current;
@@ -336,9 +419,13 @@ function BarberCalendarCore() {
     swipeDX.current = 0;
     swipeDY.current = 0;
     if (Math.abs(dx) >= SWIPE_THRESHOLD) {
+      // dx>0 means swipe right, go to previous day
       animateShift(dx > 0 ? -1 : 1);
     } else {
-      setSwipeStyle({ transform: 'translateX(0)', transition: 'transform 160ms ease' });
+      setSwipeStyle({
+        transform: 'translateX(0)',
+        transition: 'transform 160ms ease',
+      });
     }
   };
 
@@ -403,9 +490,15 @@ function BarberCalendarCore() {
                   : 'border-neutral-700 hover:border-white/60',
             ].join(' ');
             return (
-              <button key={key} onClick={() => openDay(d)} className={cls}>
+              <button
+                key={key}
+                onClick={() => openDay(d)}
+                className={cls}
+              >
                 <span
-                  className={`select-none text-[clamp(17px,3.5vw,32px)] ${isToday ? 'font-extrabold' : ''}`}
+                  className={`select-none text-[clamp(17px,3.5vw,32px)] ${
+                    isToday ? 'font-extrabold' : ''
+                  }`}
                   style={{ fontFamily: BRAND.fontNumbers }}
                 >
                   {isFull ? 'X' : num}
@@ -468,7 +561,10 @@ function BarberCalendarCore() {
 
       {/* Day Editor Modal */}
       {selectedDate && (
-        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/80" onMouseDown={() => setSelectedDate(null)}>
+        <div
+          className="fixed inset-0 z-40 flex items-center justify-center bg-black/80"
+          onMouseDown={() => setSelectedDate(null)}
+        >
           <div
             className="max-w-6xl w-[94vw] md:w-[1100px] h-[92vh] rounded-2xl border border-neutral-700 bg-[rgb(10,10,10)] p-4 md:p-6 shadow-2xl overflow-hidden"
             onMouseDown={(e) => e.stopPropagation()}
@@ -476,25 +572,62 @@ function BarberCalendarCore() {
           >
             <div className="flex h-full flex-col">
               <div className="flex items-center justify-between">
-                <h3 className="text-2xl md:text-3xl font-bold" style={{ fontFamily: BRAND.fontTitle }}>
-                  {WEEKDAYS_SHORT[(selectedDate.getDay() + 6) % 7]} {selectedDate.getDate()} {MONTHS[selectedDate.getMonth()]} {selectedDate.getFullYear()}
+                <h3
+                  className="text-2xl md:text-3xl font-bold"
+                  style={{ fontFamily: BRAND.fontTitle }}
+                >
+                  {
+                    WEEKDAYS_SHORT[
+                      (selectedDate.getDay() + 6) % 7
+                    ]
+                  }{' '}
+                  {selectedDate.getDate()}{' '}
+                  {MONTHS[selectedDate.getMonth()]}{' '}
+                  {selectedDate.getFullYear()}
                 </h3>
-                <button className="text-2xl md:text-3xl px-2 md:px-3" aria-label="Close" onClick={() => setSelectedDate(null)}>×</button>
+                <button
+                  className="text-2xl md:text-3xl px-2 md:px-3"
+                  aria-label="Close"
+                  onClick={() => setSelectedDate(null)}
+                >
+                  ×
+                </button>
               </div>
 
-              <div className="mt-4 flex-1 overflow-hidden" onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd} style={swipeStyle}>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5" style={{ gridAutoRows: 'minmax(38px,1fr)' }}>
+              <div
+                className="mt-4 flex-1 overflow-hidden"
+                onTouchStart={onTouchStart}
+                onTouchMove={onTouchMove}
+                onTouchEnd={onTouchEnd}
+                style={swipeStyle}
+              >
+                <div
+                  className="grid grid-cols-1 sm:grid-cols-2 gap-2.5"
+                  style={{ gridAutoRows: 'minmax(38px,1fr)' }}
+                >
                   {(() => {
                     const dayISO = toISODate(selectedDate);
                     return DAY_SLOTS.map((time) => {
-                      const value = (store[dayISO] && store[dayISO][time]) || '';
+                      const value =
+                        (store[dayISO] && store[dayISO][time]) || '';
                       const hasName = (value || '').trim().length > 0;
-                      const isSaved = !!(savedPulse && savedPulse.day === dayISO && savedPulse.time === time);
+                      const isSaved =
+                        !!(
+                          savedPulse &&
+                          savedPulse.day === dayISO &&
+                          savedPulse.time === time
+                        );
                       const timeKey = `${dayISO}_${time}`;
                       const isArmed = armedRemove === timeKey;
                       return (
-                        <div key={timeKey} className="relative rounded-2xl bg-neutral-900/80 border border-neutral-800 px-3 py-1.5 flex items-center gap-3 overflow-hidden">
-                          <div className="text-[1.1rem] md:text-[1.2rem] font-semibold tabular-nums min-w-[4.9rem] text-center select-none" style={{ fontFamily: BRAND.fontBody }}>
+                        <div
+                          key={timeKey}
+                          className="relative rounded-2xl bg-neutral-900/80 border border-neutral-800 px-3 py-1.5 flex items-center gap-3 overflow-hidden"
+                        >
+                          <div
+                            className="text-[1.1rem] md:text-[1.2rem] font-semibold tabular-nums min-w-[4.9rem] text-center select-none"
+                            style={{ fontFamily: BRAND.fontBody }}
+                          >
                             {time}
                           </div>
 
@@ -504,23 +637,53 @@ function BarberCalendarCore() {
                               defaultValue={value}
                               onKeyDown={(e) => {
                                 if (e.key === 'Enter') {
-                                  const v = (e.target as HTMLInputElement).value;
+                                  const v = (
+                                    e.target as HTMLInputElement
+                                  ).value;
                                   saveName(dayISO, time, v);
-                                  (e.target as HTMLInputElement).blur();
+                                  (
+                                    e.target as HTMLInputElement
+                                  ).blur();
                                 }
                               }}
-                              onBlur={(e) => saveName(dayISO, time, e.currentTarget.value)}
+                              onBlur={(e) =>
+                                saveName(
+                                  dayISO,
+                                  time,
+                                  e.currentTarget.value,
+                                )
+                              }
                               className="block w-full text-white bg-[rgb(10,10,10)] border border-neutral-700/70 focus:border-white/70 focus:outline-none focus:ring-0 rounded-lg px-3 py-1.5 text-center transition-all duration-200"
                               style={{ fontFamily: BRAND.fontBody }}
                             />
 
                             {hasName && (
                               <button
-                                onClick={() => (isArmed ? confirmRemove(dayISO, time) : armRemove(timeKey))}
-                                className={`shrink-0 w-8 h-8 md:w-9 md:h-9 rounded-lg grid place-items-center transition border ${isArmed ? 'bg-red-900/30 border-red-600/70' : 'bg-neutral-900/60 hover:bg-neutral-800/70 border-neutral-700/50'}`}
-                                aria-label={isArmed ? 'Confirm remove' : 'Remove'}
+                                onClick={() =>
+                                  isArmed
+                                    ? confirmRemove(dayISO, time)
+                                    : armRemove(timeKey)
+                                }
+                                className={`shrink-0 w-8 h-8 md:w-9 md:h-9 rounded-lg grid place-items-center transition border ${
+                                  isArmed
+                                    ? 'bg-red-900/30 border-red-600/70'
+                                    : 'bg-neutral-900/60 hover:bg-neutral-800/70 border-neutral-700/50'
+                                }`}
+                                aria-label={
+                                  isArmed
+                                    ? 'Confirm remove'
+                                    : 'Remove'
+                                }
                               >
-                                <img src={isArmed ? '/tick-green.png' : '/razor.png'} alt={isArmed ? 'Confirm' : 'Remove'} className="w-4 h-4 md:w-5 md:h-5 object-contain" />
+                                <img
+                                  src={
+                                    isArmed
+                                      ? '/tick-green.png'
+                                      : '/razor.png'
+                                  }
+                                  alt={isArmed ? 'Confirm' : 'Remove'}
+                                  className="w-4 h-4 md:w-5 md:h-5 object-contain"
+                                />
                               </button>
                             )}
                           </div>
@@ -528,7 +691,9 @@ function BarberCalendarCore() {
                           <img
                             src="/tick-green.png"
                             alt="saved"
-                            className={`pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 md:w-6 md:h-6 transition-opacity duration-300 ${isSaved ? 'opacity-100' : 'opacity-0'}`}
+                            className={`pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 md:w-6 md:h-6 transition-opacity duration-300 ${
+                              isSaved ? 'opacity-100' : 'opacity-0'
+                            }`}
                           />
                         </div>
                       );
@@ -554,7 +719,10 @@ export default function BarbershopAdminPanel() {
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    if (process.env.NODE_ENV === 'production' && localStorage.getItem('bushi_unlocked') === '1') {
+    if (
+      process.env.NODE_ENV === 'production' &&
+      localStorage.getItem('bushi_unlocked') === '1'
+    ) {
       setUnlocked(true);
     }
   }, []);
@@ -575,8 +743,12 @@ export default function BarbershopAdminPanel() {
   if (!unlocked) {
     return (
       <div className="fixed inset-0 flex items-center justify-center bg-black text-white overflow-hidden">
+        {/* Ambient glow background */}
         <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(255,255,255,0.16)_0,_transparent_55%),radial-gradient(circle_at_bottom,_rgba(255,255,255,0.12)_0,_transparent_55%)]" />
+
+        {/* Card */}
         <div className="relative w-[min(100%-40px,420px)] rounded-[32px] border border-white/10 bg-[rgba(8,8,8,0.9)] backdrop-blur-xl px-7 py-8 shadow-[0_24px_80px_rgba(0,0,0,0.9)]">
+          {/* Small label */}
           <div className="mb-4 flex justify-center">
             <span
               className="inline-flex items-center justify-center rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[10px] uppercase tracking-[0.22em] text-neutral-300"
@@ -586,6 +758,7 @@ export default function BarbershopAdminPanel() {
             </span>
           </div>
 
+          {/* Logo wordmark */}
           <div className="mb-4 flex justify-center">
             <img
               src="/bush.png"
@@ -601,6 +774,7 @@ export default function BarbershopAdminPanel() {
           </p>
 
           <form onSubmit={handleSubmit} className="space-y-4">
+            {/* Input wrapper */}
             <div className="rounded-2xl bg-neutral-900/80 border border-white/12 px-4 py-3 flex items-center focus-within:border-white/70 transition">
               <input
                 type="password"
