@@ -101,27 +101,6 @@ const isDayFull = (dayISO: string, store: Store) => {
 };
 
 // =============================================================================
-// Storage (local cache)
-// =============================================================================
-const LS_KEY = 'barber_appointments_v1';
-const canUseStorage = () =>
-  typeof window !== 'undefined' && typeof localStorage !== 'undefined';
-
-const readStore = (): Store => {
-  if (!canUseStorage()) return {};
-  try {
-    const raw = localStorage.getItem(LS_KEY);
-    return raw ? (JSON.parse(raw) as Store) : {};
-  } catch {
-    return {};
-  }
-};
-
-const writeStore = (data: Store) => {
-  if (canUseStorage()) localStorage.setItem(LS_KEY, JSON.stringify(data));
-};
-
-// =============================================================================
 // Remote Sync (multi-device: phone + tablet + PC)
 // =============================================================================
 const API_ENDPOINT = '/api/appointments';
@@ -148,7 +127,7 @@ async function pushRemoteStore(data: Store): Promise<void> {
       body: JSON.stringify(data),
     });
   } catch {
-    // fail silently; localStorage still keeps a copy
+    // fail silently; Supabase is the only source, but network errors will just not sync
   }
 }
 
@@ -194,16 +173,11 @@ function BarberCalendarCore() {
   const [showYear, setShowYear] = useState(false);
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
 
-  // === APPOINTMENT STORE (local + remote sync) ===
-  const [store, setStore] = useState<Store>(readStore());
+  // === APPOINTMENT STORE — Supabase ONLY, no localStorage ===
+  const [store, setStore] = useState<Store>({});
   const lastLocalChangeRef = useRef<number | null>(null);
 
-  // Mirror to localStorage
-  useEffect(() => {
-    writeStore(store);
-  }, [store]);
-
-  // 🔄 Load from Supabase on first render AND whenever the tab/app becomes visible
+  // Load from Supabase on first render AND whenever the tab/app becomes visible
   useEffect(() => {
     let cancelled = false;
 
@@ -212,7 +186,6 @@ function BarberCalendarCore() {
       if (!remote || cancelled) return;
       // Remote is source of truth
       setStore(remote);
-      writeStore(remote);
     };
 
     // 1) Initial load
@@ -317,7 +290,7 @@ function BarberCalendarCore() {
 
   const monthLabel = `${MONTHS[viewMonth]} ${viewYear}`;
 
-  // ===== Save / Delete with synced push =====
+  // ===== Save / Delete with synced push to Supabase =====
   const saveName = (day: string, time: string, nameRaw: string) => {
     const name = nameRaw.trim();
     setStore((prev) => {
@@ -335,6 +308,7 @@ function BarberCalendarCore() {
       }
 
       lastLocalChangeRef.current = Date.now();
+      // Supabase is the only storage:
       pushRemoteStore(next);
 
       return next;
@@ -541,7 +515,7 @@ function BarberCalendarCore() {
                     setViewMonth(idx);
                     setShowYear(false);
                   }}
-                  className={`h-11 sm:h-12 rounded-2xl border text-[13px] sm:text-[14px] tracking-[0.12em] uppercase flex items-center justify-center transition ${
+                  className={`h-11 sm:h-12 rounded-2xl border text-[13px] sm:text-[14px] tracking-[0.12em] uppercase flex items	center justify-center transition ${
                     idx === viewMonth
                       ? 'border-white text-white bg-neutral-900'
                       : 'border-neutral-700/70 text-neutral-200 bg-neutral-900/50 hover:bg-neutral-800'
