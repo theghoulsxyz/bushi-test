@@ -110,7 +110,7 @@ const writeStore = (data: Store) => {
 };
 
 // =============================================================================
-// Remote Sync (multi-device: phone + tablet + PC)
+ // Remote Sync (multi-device: phone + tablet + PC)
 // =============================================================================
 const API_ENDPOINT = '/api/appointments';
 
@@ -180,10 +180,6 @@ function BarberCalendarCore() {
 
   // === APPOINTMENT STORE (local + remote sync) ===
   const [store, setStore] = useState<Store>(readStore());
-  const storeRef = useRef<Store>(store);
-  useEffect(() => {
-    storeRef.current = store;
-  }, [store]);
 
   // Always mirror to localStorage
   useEffect(() => {
@@ -198,14 +194,8 @@ function BarberCalendarCore() {
       const remote = await fetchRemoteStore();
       if (!remote || cancelled) return;
 
-      setStore((prev) => {
-        // Merge remote over local: remote wins per day/time, but we keep other local keys
-        const merged: Store = { ...prev };
-        for (const [day, slots] of Object.entries(remote)) {
-          merged[day] = { ...(merged[day] || {}), ...slots };
-        }
-        return merged;
-      });
+      // Remote is the source of truth: replace local store with remote snapshot
+      setStore(remote);
     };
 
     // Initial sync immediately
