@@ -196,8 +196,6 @@ function BarberCalendarCore() {
 
   // === APPOINTMENT STORE (local + remote sync) ===
   const [store, setStore] = useState<Store>(readStore());
-
-  // Track when user last changed something (kept in case we add polling again)
   const lastLocalChangeRef = useRef<number | null>(null);
 
   // Mirror to localStorage
@@ -205,21 +203,37 @@ function BarberCalendarCore() {
     writeStore(store);
   }, [store]);
 
-  // 🔥 NEW: Load from Supabase ONCE on first render (no polling)
+  // 🔄 Load from Supabase on first render AND whenever the tab/app becomes visible
   useEffect(() => {
     let cancelled = false;
 
-    const syncFromRemoteOnce = async () => {
+    const syncFromRemote = async () => {
       const remote = await fetchRemoteStore();
       if (!remote || cancelled) return;
+      // Remote is source of truth
       setStore(remote);
       writeStore(remote);
     };
 
-    syncFromRemoteOnce();
+    // 1) Initial load
+    syncFromRemote();
+
+    // 2) Every time the document becomes visible again
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        syncFromRemote();
+      }
+    };
+
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', handleVisibility);
+    }
 
     return () => {
       cancelled = true;
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', handleVisibility);
+      }
     };
   }, []);
 
@@ -320,7 +334,6 @@ function BarberCalendarCore() {
         next[day][time] = name;
       }
 
-      // Mark local change & push to server
       lastLocalChangeRef.current = Date.now();
       pushRemoteStore(next);
 
