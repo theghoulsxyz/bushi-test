@@ -197,7 +197,7 @@ function BarberCalendarCore() {
   // === APPOINTMENT STORE (local + remote sync) ===
   const [store, setStore] = useState<Store>(readStore());
 
-  // Track when user last changed something, to avoid poll instantly overwriting it
+  // Track when user last changed something (kept in case we add polling again)
   const lastLocalChangeRef = useRef<number | null>(null);
 
   // Mirror to localStorage
@@ -205,36 +205,21 @@ function BarberCalendarCore() {
     writeStore(store);
   }, [store]);
 
-  // Pull from Supabase on load AND poll every few seconds
+  // 🔥 NEW: Load from Supabase ONCE on first render (no polling)
   useEffect(() => {
     let cancelled = false;
 
-    const syncFromRemote = async () => {
+    const syncFromRemoteOnce = async () => {
       const remote = await fetchRemoteStore();
       if (!remote || cancelled) return;
-
-      const now = Date.now();
-      // If we just changed something locally in last 2s, skip this poll
-      if (
-        lastLocalChangeRef.current &&
-        now - lastLocalChangeRef.current < 2000
-      ) {
-        return;
-      }
-
-      // Remote is the source of truth: replace local store with remote snapshot
       setStore(remote);
       writeStore(remote);
     };
 
-    // Initial sync immediately
-    syncFromRemote();
-    // Then poll every 5 seconds for cross-device updates
-    const id = setInterval(syncFromRemote, 5000);
+    syncFromRemoteOnce();
 
     return () => {
       cancelled = true;
-      clearInterval(id);
     };
   }, []);
 
@@ -363,7 +348,6 @@ function BarberCalendarCore() {
         }
       }
 
-      // Mark local change & push to server (including full clear)
       lastLocalChangeRef.current = Date.now();
       pushRemoteStore(next);
 
