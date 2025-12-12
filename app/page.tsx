@@ -59,7 +59,15 @@ function monthMatrix(year: number, month: number) {
 
 // Bulgarian weekdays
 // Monday = 0 (using (getDay()+6)%7 remap)
-const WEEKDAYS_SHORT = ['Пон', 'Вто', 'Сря', 'Чет', 'Пет', 'Съб', 'Нед'];
+const WEEKDAYS_SHORT = [
+  'Пон',
+  'Вто',
+  'Сря',
+  'Чет',
+  'Пет',
+  'Съб',
+  'Нед',
+];
 
 const WEEKDAYS_FULL = [
   'Понеделник',
@@ -427,7 +435,7 @@ function BarberCalendarCore() {
           <img
             src={BRAND.logoLight}
             alt="logo"
-            className="h-72 md:h-[22rem] w-auto cursor-pointer"
+            className="h-72 md:h-[22rem] w-auto cursor-pointer shrink-0"
             onClick={() => {
               const now = new Date();
               setViewYear(now.getFullYear());
@@ -436,7 +444,7 @@ function BarberCalendarCore() {
           />
           <button
             onClick={() => setShowYear(true)}
-            className="text-3xl sm:text-4xl md:text-7xl font-bold cursor-pointer hover:text-gray-300 select-none text-right flex-1"
+            className="min-w-0 flex-1 text-3xl sm:text-4xl md:text-7xl font-bold cursor-pointer hover:text-gray-300 select-none text-right whitespace-nowrap overflow-hidden text-ellipsis leading-none"
             style={{ fontFamily: BRAND.fontTitle }}
             title="Open year view"
           >
@@ -548,7 +556,7 @@ function BarberCalendarCore() {
                     setViewMonth(idx);
                     setShowYear(false);
                   }}
-                  className={`h-11 sm:h-12 rounded-2xl border whitespace-nowrap px-2 text-[clamp(11px,1.6vw,14px)] tracking-[0.10em] flex items-center justify-center transition ${
+                  className={`h-11 sm:h-12 rounded-2xl border text-[13px] sm:text-[14px] tracking-[0.12em] uppercase flex items-center justify-center transition ${
                     idx === viewMonth
                       ? 'border-white text-white bg-neutral-900'
                       : 'border-neutral-700/70 text-neutral-200 bg-neutral-900/50 hover:bg-neutral-800'
@@ -610,12 +618,11 @@ function BarberCalendarCore() {
                     return DAY_SLOTS.map((time) => {
                       const value = (store[dayISO] && store[dayISO][time]) || '';
                       const hasName = (value || '').trim().length > 0;
-                      const isSaved =
-                        !!(
-                          savedPulse &&
-                          savedPulse.day === dayISO &&
-                          savedPulse.time === time
-                        );
+                      const isSaved = !!(
+                        savedPulse &&
+                        savedPulse.day === dayISO &&
+                        savedPulse.time === time
+                      );
                       const timeKey = `${dayISO}_${time}`;
                       const isArmed = armedRemove === timeKey;
                       return (
