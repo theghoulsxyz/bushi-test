@@ -195,19 +195,29 @@ function BarberCalendarCore() {
   const [store, setStore] = useState<Store>({});
   const lastLocalChangeRef = useRef<number | null>(null);
 
-  // Remote refresh control (avoid overlapping fetches; allow manual force refresh)
+  // Manual refresh feedback (so you know it actually pulled from Supabase)
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [lastRefreshTs, setLastRefreshTs] = useState<number | null>(null);
+
+  // Remote refresh control (avoid overlapping fetches)
   const remoteCancelledRef = useRef(false);
   const remoteSyncInFlightRef = useRef(false);
 
-  const syncFromRemote = async () => {
+  const syncFromRemote = async (opts?: { showUi?: boolean }) => {
+    const showUi = !!opts?.showUi;
     if (remoteSyncInFlightRef.current) return;
     remoteSyncInFlightRef.current = true;
+    if (showUi) setIsRefreshing(true);
+
     try {
       const remote = await fetchRemoteStore();
       if (!remote || remoteCancelledRef.current) return;
+
       // Remote is source of truth
       setStore(remote);
+      setLastRefreshTs(Date.now());
     } finally {
+      if (showUi) setIsRefreshing(false);
       remoteSyncInFlightRef.current = false;
     }
   };
@@ -216,8 +226,11 @@ function BarberCalendarCore() {
   useEffect(() => {
     remoteCancelledRef.current = false;
 
-    // 1) Initial load
+    // 1) Initial load (and a quick retry for cold-start/network hiccups)
     syncFromRemote();
+    const retry = setTimeout(() => {
+      if (!remoteCancelledRef.current) syncFromRemote();
+    }, 900);
 
     // 2) Every time the document becomes visible again
     const handleVisibility = () => {
@@ -237,6 +250,7 @@ function BarberCalendarCore() {
 
     return () => {
       remoteCancelledRef.current = true;
+      clearTimeout(retry);
       if (typeof document !== 'undefined') {
         document.removeEventListener('visibilitychange', handleVisibility);
       }
@@ -438,18 +452,39 @@ function BarberCalendarCore() {
       <div className="max-w-screen-2xl mx-auto px-[clamp(12px,2.5vw,40px)] pt-[clamp(12px,2.5vw,40px)] pb-[clamp(8px,2vw,24px)] h-full flex flex-col select-none">
         {/* Header */}
         <div className="flex items-center justify-between gap-4 md:gap-8">
-          <img
-            src={BRAND.logoLight}
-            alt="logo"
-            className="h-72 md:h-[22rem] w-auto cursor-pointer"
-            onClick={() => {
-              const now = new Date();
-              setViewYear(now.getFullYear());
-              setViewMonth(now.getMonth());
-              // Force refresh from Supabase (remote is source of truth)
-              syncFromRemote();
-            }}
-          />
+          <div className="relative shrink-0">
+            <img
+              src={BRAND.logoLight}
+              alt="logo"
+              className="h-72 md:h-[22rem] w-auto cursor-pointer"
+              title="Go to today + refresh"
+              onClick={() => {
+                const now = new Date();
+                setViewYear(now.getFullYear());
+                setViewMonth(now.getMonth());
+                // Manual force refresh from Supabase (useful if first load was empty)
+                syncFromRemote({ showUi: true });
+              }}
+            />
+            {/* Manual refresh button (does NOT change month/day view) */}
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                syncFromRemote({ showUi: true });
+              }}
+              className="absolute -right-2 -bottom-2 inline-flex h-9 w-9 items-center justify-center rounded-full border border-neutral-700/70 bg-neutral-900/70 hover:bg-neutral-800 transition"
+              aria-label="Refresh data"
+              title={
+                lastRefreshTs
+                  ? `Refresh from Supabase (last: ${new Date(
+                      lastRefreshTs,
+                    ).toLocaleTimeString()})`
+                  : 'Refresh from Supabase'
+              }
+            >
+              <span className={isRefreshing ? 'animate-spin' : ''}>⟳</span>
+            </button>
+          </div>
           <button
             onClick={() => setShowYear(true)}
             className="text-3xl sm:text-4xl md:text-7xl font-bold cursor-pointer hover:text-gray-300 select-none text-right flex-1"
