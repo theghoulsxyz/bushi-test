@@ -761,7 +761,7 @@ function BarberCalendarCore() {
               const key = toISODate(d);
               const num = d.getDate();
               const ratio = dayFillRatio(key, store);
-              const showBar = inMonth && ratio > 0; // ✅ no bar for empty days
+              const showBar = inMonth && ratio > 0; // no bar for empty days
               const isFull = isDayFull(key, store);
               const isToday = inMonth && key === todayISO;
 
@@ -789,14 +789,14 @@ function BarberCalendarCore() {
                       {inMonth && isFull ? 'X' : num}
                     </span>
 
-                    {/* ✅ Tiny progress bar ONLY when ratio > 0 */}
+                    {/* ✅ Longer, more visible progress bar (only when ratio > 0) */}
                     {showBar && (
                       <div
-                        className="w-[min(72px,70%)] h-[6px] rounded-full overflow-hidden border border-white/10 bg-white/5"
+                        className="w-[86%] max-w-[140px] h-[8px] rounded-full overflow-hidden border border-white/14 bg-white/6"
                         aria-hidden="true"
                       >
                         <div
-                          className="h-full rounded-full bg-white/70"
+                          className="h-full rounded-full bg-white/75"
                           style={{
                             width: barFillWidth,
                             transition:
@@ -875,8 +875,26 @@ function BarberCalendarCore() {
             onTouchStart={(e) => e.stopPropagation()}
           >
             <div className="flex h-full flex-col">
-              {/* Header (NO X button) */}
-              <div className="flex items-center justify-between">
+              {/* Header (tap on mobile closes) */}
+              <div
+                className="flex items-center justify-between"
+                onMouseDown={(e) => {
+                  // ✅ mobile: tap header closes
+                  if (!isTabletOrBigger()) {
+                    e.stopPropagation();
+                    animateCloseDown();
+                  }
+                }}
+                onTouchStart={(e) => {
+                  // ✅ mobile: tap header closes
+                  if (!isTabletOrBigger()) {
+                    e.stopPropagation();
+                    animateCloseDown();
+                  }
+                }}
+                style={{ cursor: !isTabletOrBigger() ? 'pointer' : 'default' }}
+                title={!isTabletOrBigger() ? 'Tap to close' : undefined}
+              >
                 <h3
                   className="text-2xl md:text-3xl font-bold"
                   style={{ fontFamily: BRAND.fontTitle }}
