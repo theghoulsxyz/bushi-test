@@ -116,6 +116,18 @@ const isDayFull = (dayISO: string, store: Store) => {
   return true;
 };
 
+// Progress ratio for tiny bar (0..1)
+const dayFillRatio = (dayISO: string, store: Store) => {
+  const day = store[dayISO];
+  if (!day) return 0;
+  let filled = 0;
+  for (const slot of DAY_SLOTS) {
+    const v = day[slot];
+    if (v && v.trim().length > 0) filled++;
+  }
+  return filled / DAY_SLOTS.length;
+};
+
 // =============================================================================
 // Remote Sync (multi-device: phone + tablet + PC)
 // =============================================================================
@@ -742,34 +754,61 @@ function BarberCalendarCore() {
           className="mt-[clamp(10px,2.2vw,20px)] flex-1 grid grid-cols-7 gap-[clamp(4px,2vw,16px)] overflow-visible pb-[clamp(24px,3.2vw,48px)]"
           style={{ fontFamily: BRAND.fontNumbers, gridAutoRows: '1fr' }}
         >
-          {matrix.flat().map((d) => {
-            const inMonth = d.getMonth() === viewMonth;
-            const key = toISODate(d);
-            const num = d.getDate();
-            const isFull = isDayFull(key, store);
-            const isToday = inMonth && key === todayISO;
-            const cls = [
-              'rounded-2xl flex items-center justify-center bg-neutral-900 text-white border transition cursor-pointer',
-              'h-full w-full aspect-square md:aspect-auto p-[clamp(6px,1vw,20px)] focus:outline-none focus:ring-2 focus:ring-white/60',
-              !inMonth
-                ? 'border-neutral-800 opacity-40 hover:opacity-70'
-                : isToday
-                  ? 'border-neutral-700'
-                  : 'border-neutral-700 hover:border-white/60',
-            ].join(' ');
-            return (
-              <button key={key} onClick={() => openDay(d)} className={cls}>
-                <span
-                  className={`select-none text-[clamp(17px,3.5vw,32px)] ${
-                    isToday ? 'font-extrabold' : ''
-                  }`}
-                  style={{ fontFamily: BRAND.fontNumbers }}
-                >
-                  {isFull ? 'X' : num}
-                </span>
-              </button>
-            );
-          })}
+          {monthMatrix(viewYear, viewMonth)
+            .flat()
+            .map((d) => {
+              const inMonth = d.getMonth() === viewMonth;
+              const key = toISODate(d);
+              const num = d.getDate();
+              const ratio = dayFillRatio(key, store);
+              const showBar = inMonth && ratio > 0; // ✅ no bar for empty days
+              const isFull = isDayFull(key, store);
+              const isToday = inMonth && key === todayISO;
+
+              const cls = [
+                'rounded-2xl flex items-center justify-center bg-neutral-900 text-white border transition cursor-pointer',
+                'h-full w-full aspect-square md:aspect-auto p-[clamp(6px,1vw,20px)] focus:outline-none',
+                !inMonth
+                  ? 'border-neutral-800 opacity-40 hover:opacity-70'
+                  : isToday
+                    ? 'border-white/70 ring-2 ring-white/20'
+                    : 'border-neutral-700 hover:border-white/60',
+              ].join(' ');
+
+              const barFillWidth = `${Math.round(ratio * 100)}%`;
+
+              return (
+                <button key={key} onClick={() => openDay(d)} className={cls}>
+                  <div className="flex flex-col items-center justify-center gap-2">
+                    <span
+                      className={`select-none text-[clamp(17px,3.5vw,32px)] ${
+                        isToday ? 'font-extrabold' : ''
+                      }`}
+                      style={{ fontFamily: BRAND.fontNumbers }}
+                    >
+                      {inMonth && isFull ? 'X' : num}
+                    </span>
+
+                    {/* ✅ Tiny progress bar ONLY when ratio > 0 */}
+                    {showBar && (
+                      <div
+                        className="w-[min(72px,70%)] h-[6px] rounded-full overflow-hidden border border-white/10 bg-white/5"
+                        aria-hidden="true"
+                      >
+                        <div
+                          className="h-full rounded-full bg-white/70"
+                          style={{
+                            width: barFillWidth,
+                            transition:
+                              'width 180ms cubic-bezier(0.25, 0.9, 0.25, 1)',
+                          }}
+                        />
+                      </div>
+                    )}
+                  </div>
+                </button>
+              );
+            })}
         </div>
       </div>
 
@@ -836,7 +875,7 @@ function BarberCalendarCore() {
             onTouchStart={(e) => e.stopPropagation()}
           >
             <div className="flex h-full flex-col">
-              {/* Header (NO X button now) */}
+              {/* Header (NO X button) */}
               <div className="flex items-center justify-between">
                 <h3
                   className="text-2xl md:text-3xl font-bold"
@@ -846,8 +885,6 @@ function BarberCalendarCore() {
                   {selectedDate.getDate()} {MONTHS[selectedDate.getMonth()]}{' '}
                   {selectedDate.getFullYear()}
                 </h3>
-
-                {/* (removed close button) */}
                 <div className="w-10 md:w-12" />
               </div>
 
