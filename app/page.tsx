@@ -39,16 +39,7 @@ const toISODate = (d: Date) =>
 const addDays = (d: Date, delta: number) =>
   new Date(d.getFullYear(), d.getMonth(), d.getDate() + delta);
 
-// Tight “iOS-like but not floaty” damped drag:
-// - near origin: 1:1
-// - after limit: reduced movement with factor (snappy, not gummy)
-function dampedDrag(distance: number, limit = 120, factor = 0.25) {
-  const sign = distance < 0 ? -1 : 1;
-  const abs = Math.abs(distance);
-  if (abs <= limit) return distance;
-  const extra = abs - limit;
-  return sign * (limit + extra * factor);
-}
+const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
 
 function monthMatrix(year: number, month: number) {
   const first = new Date(year, month, 1);
@@ -280,9 +271,13 @@ function BarberCalendarCore() {
   const [panelStyle, setPanelStyle] = useState<React.CSSProperties>({});
   const gestureModeRef = useRef<'none' | 'horizontal' | 'vertical'>('none');
 
-  const SWIPE_THRESHOLD = 52; // px (slightly higher = more intentional)
+  const SWIPE_THRESHOLD = 52; // px
   const VERTICAL_CLOSE_THRESHOLD = 95; // px
-  const SNAP_EASE = 'cubic-bezier(0.25, 0.9, 0.25, 1)'; // snappy, not floaty
+  const SNAP_EASE = 'cubic-bezier(0.25, 0.9, 0.25, 1)';
+
+  // 1:1 drag clamps (prevents panel/content from flying off-screen)
+  const H_DRAG_CLAMP = 220;
+  const V_DRAG_CLAMP = 240;
 
   const isTabletOrBigger = () =>
     typeof window !== 'undefined' &&
@@ -434,7 +429,7 @@ function BarberCalendarCore() {
     return () => window.removeEventListener('keydown', onKey);
   }, [selectedDate]);
 
-  // touch handlers: tight damped drag + snappy snap
+  // touch handlers: 1:1 drag + iOS-ish snap
   const onTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
     swipeStartX.current = e.touches[0].clientX;
     swipeStartY.current = e.touches[0].clientY;
@@ -467,8 +462,8 @@ function BarberCalendarCore() {
     }
 
     if (gestureModeRef.current === 'vertical') {
-      const dy = dampedDrag(Math.max(dyRaw, 0), 140, 0.22);
-      const opacity = Math.max(0.7, 1 - dy / 520); // subtle only
+      const dy = clamp(Math.max(dyRaw, 0), 0, V_DRAG_CLAMP); // 1:1 (clamped)
+      const opacity = Math.max(0.75, 1 - dy / 640); // very subtle fade
       setPanelStyle({
         transform: `translateY(${dy}px)`,
         opacity,
@@ -479,7 +474,7 @@ function BarberCalendarCore() {
     }
 
     if (gestureModeRef.current === 'horizontal') {
-      const dx = dampedDrag(dxRaw, 120, 0.28);
+      const dx = clamp(dxRaw, -H_DRAG_CLAMP, H_DRAG_CLAMP); // 1:1 (clamped)
       setSwipeStyle({ transform: `translateX(${dx}px)`, transition: 'none' });
       return;
     }
@@ -626,7 +621,6 @@ function BarberCalendarCore() {
             onMouseDown={(e) => e.stopPropagation()}
             onTouchStart={(e) => e.stopPropagation()}
           >
-            {/* Header: year +/- + close */}
             <div className="flex items-center justify-between gap-4">
               <div className="flex items-center gap-3">
                 <button
@@ -659,7 +653,6 @@ function BarberCalendarCore() {
               </button>
             </div>
 
-            {/* Months grid */}
             <div className="mt-6 grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-4">
               {MONTHS.map((label, idx) => (
                 <button
@@ -714,7 +707,6 @@ function BarberCalendarCore() {
                 </button>
               </div>
 
-              {/* Content area */}
               <div
                 className="mt-4 flex-1 overflow-y-auto md:overflow-visible"
                 onTouchStart={onTouchStart}
@@ -738,6 +730,9 @@ function BarberCalendarCore() {
                       );
                       const timeKey = `${dayISO}_${time}`;
                       const isArmed = armedRemove === timeKey;
+
+                      const saveNow = (v: string) => saveName(dayISO, time, v);
+
                       return (
                         <div
                           key={timeKey}
@@ -757,13 +752,11 @@ function BarberCalendarCore() {
                               onKeyDown={(e) => {
                                 if (e.key === 'Enter') {
                                   const v = (e.target as HTMLInputElement).value;
-                                  saveName(dayISO, time, v);
+                                  saveNow(v);
                                   (e.target as HTMLInputElement).blur();
                                 }
                               }}
-                              onBlur={(e) =>
-                                saveName(dayISO, time, e.currentTarget.value)
-                              }
+                              onBlur={(e) => saveNow(e.currentTarget.value)}
                               className="block w-full text-white bg-[rgb(10,10,10)] border border-neutral-700/70 focus:border-white/70 focus:outline-none focus:ring-0 rounded-lg px-3 py-1.5 text-center transition-all duration-200"
                               style={{ fontFamily: BRAND.fontBody }}
                             />
@@ -773,7 +766,7 @@ function BarberCalendarCore() {
                                 onClick={() =>
                                   isArmed
                                     ? confirmRemove(dayISO, time)
-                                    : armRemove(timeKey)
+                                    : setArmedRemove(timeKey)
                                 }
                                 className={`shrink-0 w-8 h-8 md:w-9 md:h-9 rounded-lg grid place-items-center transition border ${
                                   isArmed
@@ -865,6 +858,7 @@ export default function BarbershopAdminPanel() {
               className="max-h-16 w-auto object-contain"
             />
           </div>
+
           <p
             className="text-xs text-neutral-400 text-center mb-6"
             style={{ fontFamily: BRAND.fontBody }}
