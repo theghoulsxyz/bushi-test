@@ -53,20 +53,46 @@ function monthMatrix(year: number, month: number) {
   return rows;
 }
 
-const WEEKDAYS_SHORT = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
+// =============================================================================
+// Weekdays / Months (Bulgarian)
+// =============================================================================
+
+// Bulgarian weekdays
+// Monday = 0 (using (getDay()+6)%7 remap)
+const WEEKDAYS_SHORT = [
+  'Пон',
+  'Вто',
+  'Сря',
+  'Чет',
+  'Пет',
+  'Съб',
+  'Нед',
+];
+
+const WEEKDAYS_FULL = [
+  'Понеделник',
+  'Вторник',
+  'Сряда',
+  'Четвъртък',
+  'Петък',
+  'Събота',
+  'Неделя',
+];
+
+// Bulgarian months (Capitalized)
 const MONTHS = [
-  'January',
-  'February',
-  'March',
-  'April',
-  'May',
-  'June',
-  'July',
-  'August',
-  'September',
-  'October',
-  'November',
-  'December',
+  'Януари',
+  'Февруари',
+  'Март',
+  'Април',
+  'Май',
+  'Юни',
+  'Юли',
+  'Август',
+  'Септември',
+  'Октомври',
+  'Ноември',
+  'Декември',
 ];
 
 // =============================================================================
@@ -288,7 +314,7 @@ function BarberCalendarCore() {
     [viewYear, viewMonth],
   );
 
-  // ⬇️ NEW: allow clicking grey days, and update month/year when they are from prev/next month
+  // Allow clicking grey days; update month/year if needed
   const openDay = (d: Date) => {
     if (d.getFullYear() !== viewYear || d.getMonth() !== viewMonth) {
       setViewYear(d.getFullYear());
@@ -439,7 +465,7 @@ function BarberCalendarCore() {
           {WEEKDAYS_SHORT.map((d) => (
             <div
               key={d}
-              className="text-center font-bold text-gray-300 text-[clamp(18px,3.2vw,26px)]"
+              className="text-center font-bold text-gray-300 text-[clamp(14px,2.8vw,22px)]"
             >
               {d}
             </div>
@@ -571,11 +597,7 @@ function BarberCalendarCore() {
                   className="text-2xl md:text-3xl font-bold"
                   style={{ fontFamily: BRAND.fontTitle }}
                 >
-                  {
-                    WEEKDAYS_SHORT[
-                      (selectedDate.getDay() + 6) % 7
-                    ]
-                  }{' '}
+                  {WEEKDAYS_FULL[(selectedDate.getDay() + 6) % 7]}{' '}
                   {selectedDate.getDate()}{' '}
                   {MONTHS[selectedDate.getMonth()]}{' '}
                   {selectedDate.getFullYear()}
