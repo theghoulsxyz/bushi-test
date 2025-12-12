@@ -191,6 +191,27 @@ function BarberCalendarCore() {
   const [showYear, setShowYear] = useState(false);
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
 
+  // Digital clock (top right under month title) — HH:MM (no seconds)
+  const [nowTick, setNowTick] = useState<Date>(() => new Date());
+  useEffect(() => {
+    const t = setInterval(() => setNowTick(new Date()), 1000);
+    return () => clearInterval(t);
+  }, []);
+
+  const clockLabel = useMemo(() => {
+    try {
+      // Bulgarian locale, 24h, HH:MM
+      return nowTick.toLocaleTimeString('bg-BG', {
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+      });
+    } catch {
+      // fallback
+      return `${pad(nowTick.getHours())}:${pad(nowTick.getMinutes())}`;
+    }
+  }, [nowTick]);
+
   // === APPOINTMENT STORE — Supabase ONLY, no localStorage ===
   const [store, setStore] = useState<Store>({});
   const lastLocalChangeRef = useRef<number | null>(null);
@@ -273,6 +294,7 @@ function BarberCalendarCore() {
   const [swipeStyle, setSwipeStyle] = useState<React.CSSProperties>({});
   const SWIPE_THRESHOLD = 48; // px
   const VERTICAL_CLOSE_THRESHOLD = 90; // px (tablet: swipe down to close)
+
   const isTabletOrBigger = () =>
     typeof window !== 'undefined' &&
     (window.matchMedia
@@ -469,14 +491,27 @@ function BarberCalendarCore() {
               syncFromRemote();
             }}
           />
-          <button
-            onClick={() => setShowYear(true)}
-            className="text-3xl sm:text-4xl md:text-7xl font-bold cursor-pointer hover:text-gray-300 select-none text-right flex-1"
-            style={{ fontFamily: BRAND.fontTitle }}
-            title="Open year view"
-          >
-            {monthLabel}
-          </button>
+
+          {/* Right side: Month title + digital clock under it */}
+          <div className="flex-1 min-w-0 flex flex-col items-end text-right">
+            <button
+              onClick={() => setShowYear(true)}
+              className="text-3xl sm:text-4xl md:text-7xl font-bold cursor-pointer hover:text-gray-300 select-none"
+              style={{ fontFamily: BRAND.fontTitle }}
+              title="Open year view"
+            >
+              {monthLabel}
+            </button>
+
+            <div
+              className="mt-2 text-gray-300/90 font-semibold tracking-[0.22em] tabular-nums text-[clamp(12px,1.6vw,18px)]"
+              style={{ fontFamily: BRAND.fontBody }}
+              aria-label="Current time"
+              title="Local time"
+            >
+              {clockLabel}
+            </div>
+          </div>
         </div>
 
         {/* Weekday labels */}
