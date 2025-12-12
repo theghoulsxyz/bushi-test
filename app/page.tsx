@@ -59,15 +59,7 @@ function monthMatrix(year: number, month: number) {
 
 // Bulgarian weekdays
 // Monday = 0 (using (getDay()+6)%7 remap)
-const WEEKDAYS_SHORT = [
-  'Пон',
-  'Вто',
-  'Сря',
-  'Чет',
-  'Пет',
-  'Съб',
-  'Нед',
-];
+const WEEKDAYS_SHORT = ['Пон', 'Вто', 'Сря', 'Чет', 'Пет', 'Съб', 'Нед'];
 
 const WEEKDAYS_FULL = [
   'Понеделник',
@@ -203,16 +195,26 @@ function BarberCalendarCore() {
   const [store, setStore] = useState<Store>({});
   const lastLocalChangeRef = useRef<number | null>(null);
 
-  // 🔄 Load from Supabase on first render, on visibility, and every few seconds
-  useEffect(() => {
-    let cancelled = false;
+  // Remote refresh control (avoid overlapping fetches; allow manual force refresh)
+  const remoteCancelledRef = useRef(false);
+  const remoteSyncInFlightRef = useRef(false);
 
-    const syncFromRemote = async () => {
+  const syncFromRemote = async () => {
+    if (remoteSyncInFlightRef.current) return;
+    remoteSyncInFlightRef.current = true;
+    try {
       const remote = await fetchRemoteStore();
-      if (!remote || cancelled) return;
+      if (!remote || remoteCancelledRef.current) return;
       // Remote is source of truth
       setStore(remote);
-    };
+    } finally {
+      remoteSyncInFlightRef.current = false;
+    }
+  };
+
+  // 🔄 Load from Supabase on first render, on visibility, and every few seconds
+  useEffect(() => {
+    remoteCancelledRef.current = false;
 
     // 1) Initial load
     syncFromRemote();
@@ -229,10 +231,12 @@ function BarberCalendarCore() {
     }
 
     // 3) Periodic sync (approx. realtime between devices)
-    const interval = setInterval(syncFromRemote, 4000); // every 4 seconds
+    const interval = setInterval(() => {
+      syncFromRemote();
+    }, 4000); // every 4 seconds
 
     return () => {
-      cancelled = true;
+      remoteCancelledRef.current = true;
       if (typeof document !== 'undefined') {
         document.removeEventListener('visibilitychange', handleVisibility);
       }
@@ -275,10 +279,7 @@ function BarberCalendarCore() {
     setSelectedDate((prev) => {
       if (!prev) return prev;
       const next = addDays(prev, delta);
-      if (
-        next.getFullYear() !== viewYear ||
-        next.getMonth() !== viewMonth
-      ) {
+      if (next.getFullYear() !== viewYear || next.getMonth() !== viewMonth) {
         setViewYear(next.getFullYear());
         setViewMonth(next.getMonth());
       }
@@ -445,6 +446,8 @@ function BarberCalendarCore() {
               const now = new Date();
               setViewYear(now.getFullYear());
               setViewMonth(now.getMonth());
+              // Force refresh from Supabase (remote is source of truth)
+              syncFromRemote();
             }}
           />
           <button
@@ -493,11 +496,7 @@ function BarberCalendarCore() {
                   : 'border-neutral-700 hover:border-white/60',
             ].join(' ');
             return (
-              <button
-                key={key}
-                onClick={() => openDay(d)}
-                className={cls}
-              >
+              <button key={key} onClick={() => openDay(d)} className={cls}>
                 <span
                   className={`select-none text-[clamp(17px,3.5vw,32px)] ${
                     isToday ? 'font-extrabold' : ''
@@ -598,8 +597,7 @@ function BarberCalendarCore() {
                   style={{ fontFamily: BRAND.fontTitle }}
                 >
                   {WEEKDAYS_FULL[(selectedDate.getDay() + 6) % 7]}{' '}
-                  {selectedDate.getDate()}{' '}
-                  {MONTHS[selectedDate.getMonth()]}{' '}
+                  {selectedDate.getDate()} {MONTHS[selectedDate.getMonth()]}{' '}
                   {selectedDate.getFullYear()}
                 </h3>
                 <button
@@ -626,15 +624,13 @@ function BarberCalendarCore() {
                   {(() => {
                     const dayISO = toISODate(selectedDate);
                     return DAY_SLOTS.map((time) => {
-                      const value =
-                        (store[dayISO] && store[dayISO][time]) || '';
+                      const value = (store[dayISO] && store[dayISO][time]) || '';
                       const hasName = (value || '').trim().length > 0;
-                      const isSaved =
-                        !!(
-                          savedPulse &&
-                          savedPulse.day === dayISO &&
-                          savedPulse.time === time
-                        );
+                      const isSaved = !!(
+                        savedPulse &&
+                        savedPulse.day === dayISO &&
+                        savedPulse.time === time
+                      );
                       const timeKey = `${dayISO}_${time}`;
                       const isArmed = armedRemove === timeKey;
                       return (
@@ -655,21 +651,13 @@ function BarberCalendarCore() {
                               defaultValue={value}
                               onKeyDown={(e) => {
                                 if (e.key === 'Enter') {
-                                  const v = (
-                                    e.target as HTMLInputElement
-                                  ).value;
+                                  const v = (e.target as HTMLInputElement).value;
                                   saveName(dayISO, time, v);
-                                  (
-                                    e.target as HTMLInputElement
-                                  ).blur();
+                                  (e.target as HTMLInputElement).blur();
                                 }
                               }}
                               onBlur={(e) =>
-                                saveName(
-                                  dayISO,
-                                  time,
-                                  e.currentTarget.value,
-                                )
+                                saveName(dayISO, time, e.currentTarget.value)
                               }
                               className="block w-full text-white bg-[rgb(10,10,10)] border border-neutral-700/70 focus:border-white/70 focus:outline-none focus:ring-0 rounded-lg px-3 py-1.5 text-center transition-all duration-200"
                               style={{ fontFamily: BRAND.fontBody }}
@@ -687,18 +675,10 @@ function BarberCalendarCore() {
                                     ? 'bg-red-900/30 border-red-600/70'
                                     : 'bg-neutral-900/60 hover:bg-neutral-800/70 border-neutral-700/50'
                                 }`}
-                                aria-label={
-                                  isArmed
-                                    ? 'Confirm remove'
-                                    : 'Remove'
-                                }
+                                aria-label={isArmed ? 'Confirm remove' : 'Remove'}
                               >
                                 <img
-                                  src={
-                                    isArmed
-                                      ? '/tick-green.png'
-                                      : '/razor.png'
-                                  }
+                                  src={isArmed ? '/tick-green.png' : '/razor.png'}
                                   alt={isArmed ? 'Confirm' : 'Remove'}
                                   className="w-4 h-4 md:w-5 md:h-5 object-contain"
                                 />
