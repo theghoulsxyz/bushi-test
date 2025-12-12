@@ -1,7 +1,7 @@
 'use client';
 // Bushi Admin — Month grid + Day editor (2-column on tablet/desktop; 1-column on mobile)
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 // =============================================================================
 // Brand / Fonts
@@ -120,7 +120,6 @@ const DAY_SLOTS = buildSlots();
 
 type Store = Record<string, Record<string, string>>;
 
-// Utility: a day is "full" only when **every** slot has a non-empty name
 const isDayFull = (dayISO: string, store: Store) => {
   const day = store[dayISO];
   if (!day) return false;
@@ -131,7 +130,6 @@ const isDayFull = (dayISO: string, store: Store) => {
   return true;
 };
 
-// Progress ratio for bar (0..1)
 const dayFillRatio = (dayISO: string, store: Store) => {
   const day = store[dayISO];
   if (!day) return 0;
@@ -175,7 +173,7 @@ async function pushRemoteStore(data: Store): Promise<void> {
 }
 
 // =============================================================================
-// Tiny Dev Checks (acts like test cases)
+// Tiny Dev Checks
 // =============================================================================
 function runDevChecks(viewYear: number, viewMonth: number) {
   const matrix = monthMatrix(viewYear, viewMonth);
@@ -203,6 +201,98 @@ function runDevChecks(viewYear: number, viewMonth: number) {
 }
 
 // =============================================================================
+// Memoized slot row (performance)
+// =============================================================================
+type SlotRowProps = {
+  dayISO: string;
+  time: string;
+  value: string;
+  isSaved: boolean;
+  isArmed: boolean;
+  onSave: (day: string, time: string, nameRaw: string) => void;
+  onArm: (timeKey: string) => void;
+  onConfirmRemove: (day: string, time: string) => void;
+};
+
+const SlotRow = React.memo(function SlotRow({
+  dayISO,
+  time,
+  value,
+  isSaved,
+  isArmed,
+  onSave,
+  onArm,
+  onConfirmRemove,
+}: SlotRowProps) {
+  const hasName = (value || '').trim().length > 0;
+  const timeKey = `${dayISO}_${time}`;
+
+  return (
+    <div className="relative rounded-2xl bg-neutral-900/80 border border-neutral-800 px-3 py-1 flex items-center gap-3 overflow-hidden">
+      <div
+        className="text-[1.05rem] md:text-[1.15rem] font-semibold tabular-nums min-w-[4.9rem] text-center select-none"
+        style={{ fontFamily: BRAND.fontBody }}
+      >
+        {time}
+      </div>
+
+      <div className="flex-1 min-w-0 flex items-center gap-2">
+        <input
+          key={timeKey + value} // ensures defaultValue updates when remote sync changes
+          defaultValue={value}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              const v = (e.target as HTMLInputElement).value;
+              onSave(dayISO, time, v);
+              (e.target as HTMLInputElement).blur();
+            }
+          }}
+          onBlur={(e) => onSave(dayISO, time, e.currentTarget.value)}
+          className="block w-full text-white bg-[rgb(10,10,10)] border border-neutral-700/70 focus:border-white/70 focus:outline-none focus:ring-0 rounded-lg px-3 py-1.5 text-center transition-all duration-200"
+          style={{ fontFamily: BRAND.fontBody }}
+        />
+
+        {hasName && (
+          <button
+            onClick={() =>
+              isArmed ? onConfirmRemove(dayISO, time) : onArm(timeKey)
+            }
+            className={`shrink-0 w-8 h-8 md:w-9 md:h-9 rounded-lg grid place-items-center transition border ${
+              isArmed
+                ? 'bg-red-900/30 border-red-600/70'
+                : 'bg-neutral-900/60 hover:bg-neutral-800/70 border-neutral-700/50'
+            }`}
+            aria-label={isArmed ? 'Confirm remove' : 'Remove'}
+          >
+            <img
+              src={isArmed ? '/tick-green.png' : '/razor.png'}
+              alt={isArmed ? 'Confirm' : 'Remove'}
+              className="w-4 h-4 md:w-5 md:h-5 object-contain"
+            />
+          </button>
+        )}
+      </div>
+
+      <img
+        src="/tick-green.png"
+        alt="saved"
+        className={`pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 md:w-6 md:h-6 transition-opacity duration-300 ${
+          isSaved ? 'opacity-100' : 'opacity-0'
+        }`}
+      />
+    </div>
+  );
+},
+// custom compare: only re-render if visual inputs changed
+(prev, next) =>
+  prev.value === next.value &&
+  prev.isSaved === next.isSaved &&
+  prev.isArmed === next.isArmed &&
+  prev.dayISO === next.dayISO &&
+  prev.time === next.time,
+);
+
+// =============================================================================
 // Main Calendar Component
 // =============================================================================
 function BarberCalendarCore() {
@@ -213,6 +303,7 @@ function BarberCalendarCore() {
 
   const today = new Date();
   const todayISO = toISODate(today);
+
   const [viewYear, setViewYear] = useState(today.getFullYear());
   const [viewMonth, setViewMonth] = useState(today.getMonth());
 
@@ -225,11 +316,11 @@ function BarberCalendarCore() {
 
   const cancelledSyncRef = useRef(false);
 
-  const syncFromRemote = async () => {
+  const syncFromRemote = useCallback(async () => {
     const remote = await fetchRemoteStore();
     if (!remote || cancelledSyncRef.current) return;
     setStore(remote);
-  };
+  }, []);
 
   // 🔄 Load from Supabase on first render, on visibility, and every few seconds
   useEffect(() => {
@@ -238,7 +329,9 @@ function BarberCalendarCore() {
     syncFromRemote();
 
     const handleVisibility = () => {
-      if (document.visibilityState === 'visible') syncFromRemote();
+      if (document.visibilityState === 'visible') {
+        syncFromRemote();
+      }
     };
 
     if (typeof document !== 'undefined') {
@@ -254,7 +347,41 @@ function BarberCalendarCore() {
       }
       clearInterval(interval);
     };
-  }, []);
+  }, [syncFromRemote]);
+
+  // ✅ Performance polish: when day editor opens, immediately sync + short follow-up sync.
+  // This makes next/prev swipe feel "instant" because we already pulled latest store.
+  const selectedDayISO = useMemo(
+    () => (selectedDate ? toISODate(selectedDate) : null),
+    [selectedDate],
+  );
+  const prevDayISO = useMemo(
+    () => (selectedDate ? toISODate(addDays(selectedDate, -1)) : null),
+    [selectedDate],
+  );
+  const nextDayISO = useMemo(
+    () => (selectedDate ? toISODate(addDays(selectedDate, 1)) : null),
+    [selectedDate],
+  );
+
+  useEffect(() => {
+    if (!selectedDate) return;
+
+    // immediate sync (pull latest bookings)
+    syncFromRemote();
+
+    // follow-up sync shortly after (covers cold start / racey first load)
+    const t = window.setTimeout(() => {
+      syncFromRemote();
+    }, 650);
+
+    // Touch prev/next values so they're “warmed” in JS (tiny win, but free)
+    // (No state changes here, just access.)
+    void prevDayISO;
+    void nextDayISO;
+
+    return () => window.clearTimeout(t);
+  }, [selectedDate, syncFromRemote, prevDayISO, nextDayISO]);
 
   // prevent background scrolling when a modal is open
   useEffect(() => {
@@ -280,20 +407,24 @@ function BarberCalendarCore() {
 
   // Auto-cancel armed delete after 3.5s
   const armedTimeoutRef = useRef<number | null>(null);
-  const clearArmedTimeout = () => {
+  const clearArmedTimeout = useCallback(() => {
     if (armedTimeoutRef.current != null) {
       window.clearTimeout(armedTimeoutRef.current);
       armedTimeoutRef.current = null;
     }
-  };
-  const armRemove = (timeKey: string) => {
-    clearArmedTimeout();
-    setArmedRemove(timeKey);
-    armedTimeoutRef.current = window.setTimeout(() => {
-      setArmedRemove((cur) => (cur === timeKey ? null : cur));
-      armedTimeoutRef.current = null;
-    }, 3500);
-  };
+  }, []);
+
+  const armRemove = useCallback(
+    (timeKey: string) => {
+      clearArmedTimeout();
+      setArmedRemove(timeKey);
+      armedTimeoutRef.current = window.setTimeout(() => {
+        setArmedRemove((cur) => (cur === timeKey ? null : cur));
+        armedTimeoutRef.current = null;
+      }, 3500);
+    },
+    [clearArmedTimeout],
+  );
 
   // gesture state for iOS-like (1:1) day navigation on touch devices
   const swipeStartX = useRef<number | null>(null);
@@ -318,19 +449,19 @@ function BarberCalendarCore() {
       ? window.matchMedia('(min-width: 768px)').matches
       : window.innerWidth >= 768);
 
-  // Reset styles and armed delete when opening/changing day (and cleanup timers)
+  // Reset styles and armed delete when opening/changing day
   useEffect(() => {
     setSwipeStyle({});
     setPanelStyle({});
     gestureModeRef.current = 'none';
     setArmedRemove(null);
     clearArmedTimeout();
-  }, [selectedDate]);
+  }, [selectedDate, clearArmedTimeout]);
 
   // Cleanup on unmount
   useEffect(() => {
     return () => clearArmedTimeout();
-  }, []);
+  }, [clearArmedTimeout]);
 
   const shiftSelectedDay = (delta: number) => {
     setSelectedDate((prev) => {
@@ -515,55 +646,67 @@ function BarberCalendarCore() {
   const monthLabel = `${MONTHS[viewMonth]} ${viewYear}`;
 
   // ===== Save / Delete with synced push to Supabase =====
-  const saveName = (day: string, time: string, nameRaw: string) => {
-    const name = nameRaw.trim();
-    clearArmedTimeout();
+  const saveName = useCallback(
+    (day: string, time: string, nameRaw: string) => {
+      const name = nameRaw.trim();
+      clearArmedTimeout();
 
-    setStore((prev) => {
-      const next: Store = { ...prev };
-      if (!next[day]) next[day] = {};
+      setStore((prev) => {
+        const next: Store = { ...prev };
+        if (!next[day]) next[day] = {};
 
-      if (name === '') {
-        if (next[day]) delete next[day][time];
-        if (next[day] && Object.keys(next[day]).length === 0) {
-          delete next[day];
+        if (name === '') {
+          if (next[day]) delete next[day][time];
+          if (next[day] && Object.keys(next[day]).length === 0) {
+            delete next[day];
+          }
+        } else {
+          next[day][time] = name;
         }
-      } else {
-        next[day][time] = name;
-      }
 
-      lastLocalChangeRef.current = Date.now();
-      pushRemoteStore(next);
+        lastLocalChangeRef.current = Date.now();
+        pushRemoteStore(next);
 
-      return next;
-    });
+        return next;
+      });
 
-    setSavedPulse({ day, time, ts: Date.now() });
-    setTimeout(() => {
-      setSavedPulse((p) => (p && p.day === day && p.time === time ? null : p));
-    }, 900);
+      setSavedPulse({ day, time, ts: Date.now() });
+      setTimeout(() => {
+        setSavedPulse((p) => (p && p.day === day && p.time === time ? null : p));
+      }, 900);
 
-    setArmedRemove(null);
-  };
+      setArmedRemove(null);
+    },
+    [clearArmedTimeout],
+  );
 
-  const confirmRemove = (day: string, time: string) => {
-    clearArmedTimeout();
-    setStore((prev) => {
-      const next: Store = { ...prev };
-      if (next[day]) {
-        delete next[day][time];
-        if (Object.keys(next[day]).length === 0) {
-          delete next[day];
+  const confirmRemove = useCallback(
+    (day: string, time: string) => {
+      clearArmedTimeout();
+      setStore((prev) => {
+        const next: Store = { ...prev };
+        if (next[day]) {
+          delete next[day][time];
+          if (Object.keys(next[day]).length === 0) {
+            delete next[day];
+          }
         }
-      }
 
-      lastLocalChangeRef.current = Date.now();
-      pushRemoteStore(next);
+        lastLocalChangeRef.current = Date.now();
+        pushRemoteStore(next);
 
-      return next;
-    });
-    setArmedRemove(null);
-  };
+        return next;
+      });
+      setArmedRemove(null);
+    },
+    [clearArmedTimeout],
+  );
+
+  // Memoize the selected day’s map so the month grid rerender doesn’t repeatedly index store
+  const selectedDayMap = useMemo(() => {
+    if (!selectedDayISO) return {};
+    return store[selectedDayISO] || {};
+  }, [store, selectedDayISO]);
 
   // =============================================================================
   // Year Modal gestures (1:1 drag)
@@ -776,7 +919,7 @@ function BarberCalendarCore() {
               const key = toISODate(d);
               const num = d.getDate();
               const ratio = dayFillRatio(key, store);
-              const showBar = inMonth && ratio > 0; // no bar for empty days
+              const showBar = inMonth && ratio > 0;
               const isFull = isDayFull(key, store);
               const isToday = inMonth && key === todayISO;
 
@@ -804,7 +947,7 @@ function BarberCalendarCore() {
                       {inMonth && isFull ? 'X' : num}
                     </span>
 
-                    {/* ✅ Loading-bar style progress bar (more visible) */}
+                    {/* Loading-bar style progress */}
                     {showBar && (
                       <div
                         className="w-[92%] max-w-[180px] h-[10px] rounded-full overflow-hidden border"
@@ -891,7 +1034,7 @@ function BarberCalendarCore() {
       )}
 
       {/* Day Editor Modal */}
-      {selectedDate && (
+      {selectedDate && selectedDayISO && (
         <div
           className="fixed inset-0 z-40 flex items-center justify-center bg-black/80"
           onMouseDown={() => setSelectedDate(null)}
@@ -943,84 +1086,27 @@ function BarberCalendarCore() {
                   className="grid grid-cols-1 sm:grid-cols-2 gap-2.5"
                   style={{ gridAutoRows: 'minmax(32px,1fr)' }}
                 >
-                  {(() => {
-                    const dayISO = toISODate(selectedDate);
-                    return DAY_SLOTS.map((time) => {
-                      const value = (store[dayISO] && store[dayISO][time]) || '';
-                      const hasName = (value || '').trim().length > 0;
-                      const isSaved =
-                        !!(
-                          savedPulse &&
-                          savedPulse.day === dayISO &&
-                          savedPulse.time === time
-                        );
-                      const timeKey = `${dayISO}_${time}`;
-                      const isArmed = armedRemove === timeKey;
+                  {DAY_SLOTS.map((time) => {
+                    const value = (selectedDayMap as Record<string, string>)[time] || '';
+                    const isSaved =
+                      !!(savedPulse && savedPulse.day === selectedDayISO && savedPulse.time === time);
+                    const timeKey = `${selectedDayISO}_${time}`;
+                    const isArmed = armedRemove === timeKey;
 
-                      return (
-                        <div
-                          key={timeKey}
-                          className="relative rounded-2xl bg-neutral-900/80 border border-neutral-800 px-3 py-1 flex items-center gap-3 overflow-hidden"
-                        >
-                          <div
-                            className="text-[1.05rem] md:text-[1.15rem] font-semibold tabular-nums min-w-[4.9rem] text-center select-none"
-                            style={{ fontFamily: BRAND.fontBody }}
-                          >
-                            {time}
-                          </div>
-
-                          <div className="flex-1 min-w-0 flex items-center gap-2">
-                            <input
-                              key={timeKey + value}
-                              defaultValue={value}
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter') {
-                                  const v = (e.target as HTMLInputElement).value;
-                                  saveName(dayISO, time, v);
-                                  (e.target as HTMLInputElement).blur();
-                                }
-                              }}
-                              onBlur={(e) =>
-                                saveName(dayISO, time, e.currentTarget.value)
-                              }
-                              className="block w-full text-white bg-[rgb(10,10,10)] border border-neutral-700/70 focus:border-white/70 focus:outline-none focus:ring-0 rounded-lg px-3 py-1.5 text-center transition-all duration-200"
-                              style={{ fontFamily: BRAND.fontBody }}
-                            />
-
-                            {hasName && (
-                              <button
-                                onClick={() =>
-                                  isArmed
-                                    ? confirmRemove(dayISO, time)
-                                    : armRemove(timeKey)
-                                }
-                                className={`shrink-0 w-8 h-8 md:w-9 md:h-9 rounded-lg grid place-items-center transition border ${
-                                  isArmed
-                                    ? 'bg-red-900/30 border-red-600/70'
-                                    : 'bg-neutral-900/60 hover:bg-neutral-800/70 border-neutral-700/50'
-                                }`}
-                                aria-label={isArmed ? 'Confirm remove' : 'Remove'}
-                              >
-                                <img
-                                  src={isArmed ? '/tick-green.png' : '/razor.png'}
-                                  alt={isArmed ? 'Confirm' : 'Remove'}
-                                  className="w-4 h-4 md:w-5 md:h-5 object-contain"
-                                />
-                              </button>
-                            )}
-                          </div>
-
-                          <img
-                            src="/tick-green.png"
-                            alt="saved"
-                            className={`pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 md:w-6 md:h-6 transition-opacity duration-300 ${
-                              isSaved ? 'opacity-100' : 'opacity-0'
-                            }`}
-                          />
-                        </div>
-                      );
-                    });
-                  })()}
+                    return (
+                      <SlotRow
+                        key={timeKey}
+                        dayISO={selectedDayISO}
+                        time={time}
+                        value={value}
+                        isSaved={isSaved}
+                        isArmed={isArmed}
+                        onSave={saveName}
+                        onArm={armRemove}
+                        onConfirmRemove={confirmRemove}
+                      />
+                    );
+                  })}
                 </div>
               </div>
             </div>
