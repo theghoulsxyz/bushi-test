@@ -214,82 +214,82 @@ type SlotRowProps = {
   onConfirmRemove: (day: string, time: string) => void;
 };
 
-const SlotRow = React.memo(function SlotRow({
-  dayISO,
-  time,
-  value,
-  isSaved,
-  isArmed,
-  onSave,
-  onArm,
-  onConfirmRemove,
-}: SlotRowProps) {
-  const hasName = (value || '').trim().length > 0;
-  const timeKey = `${dayISO}_${time}`;
+const SlotRow = React.memo(
+  function SlotRow({
+    dayISO,
+    time,
+    value,
+    isSaved,
+    isArmed,
+    onSave,
+    onArm,
+    onConfirmRemove,
+  }: SlotRowProps) {
+    const hasName = (value || '').trim().length > 0;
+    const timeKey = `${dayISO}_${time}`;
 
-  return (
-    <div className="relative rounded-2xl bg-neutral-900/80 border border-neutral-800 px-3 py-1 flex items-center gap-3 overflow-hidden">
-      <div
-        className="text-[1.05rem] md:text-[1.15rem] font-semibold tabular-nums min-w-[4.9rem] text-center select-none"
-        style={{ fontFamily: BRAND.fontBody }}
-      >
-        {time}
-      </div>
-
-      <div className="flex-1 min-w-0 flex items-center gap-2">
-        <input
-          key={timeKey + value} // ensures defaultValue updates when remote sync changes
-          defaultValue={value}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') {
-              const v = (e.target as HTMLInputElement).value;
-              onSave(dayISO, time, v);
-              (e.target as HTMLInputElement).blur();
-            }
-          }}
-          onBlur={(e) => onSave(dayISO, time, e.currentTarget.value)}
-          className="block w-full text-white bg-[rgb(10,10,10)] border border-neutral-700/70 focus:border-white/70 focus:outline-none focus:ring-0 rounded-lg px-3 py-1.5 text-center transition-all duration-200"
+    return (
+      <div className="relative rounded-2xl bg-neutral-900/80 border border-neutral-800 px-3 py-1 flex items-center gap-3 overflow-hidden">
+        <div
+          className="text-[1.05rem] md:text-[1.15rem] font-semibold tabular-nums min-w-[4.9rem] text-center select-none"
           style={{ fontFamily: BRAND.fontBody }}
+        >
+          {time}
+        </div>
+
+        <div className="flex-1 min-w-0 flex items-center gap-2">
+          <input
+            key={timeKey + value} // ensures defaultValue updates when remote sync changes
+            defaultValue={value}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                const v = (e.target as HTMLInputElement).value;
+                onSave(dayISO, time, v);
+                (e.target as HTMLInputElement).blur();
+              }
+            }}
+            onBlur={(e) => onSave(dayISO, time, e.currentTarget.value)}
+            className="block w-full text-white bg-[rgb(10,10,10)] border border-neutral-700/70 focus:border-white/70 focus:outline-none focus:ring-0 rounded-lg px-3 py-1.5 text-center transition-all duration-200"
+            style={{ fontFamily: BRAND.fontBody }}
+          />
+
+          {hasName && (
+            <button
+              onClick={() =>
+                isArmed ? onConfirmRemove(dayISO, time) : onArm(timeKey)
+              }
+              className={`shrink-0 w-8 h-8 md:w-9 md:h-9 rounded-lg grid place-items-center transition border ${
+                isArmed
+                  ? 'bg-red-900/30 border-red-600/70'
+                  : 'bg-neutral-900/60 hover:bg-neutral-800/70 border-neutral-700/50'
+              }`}
+              aria-label={isArmed ? 'Confirm remove' : 'Remove'}
+            >
+              <img
+                src={isArmed ? '/tick-green.png' : '/razor.png'}
+                alt={isArmed ? 'Confirm' : 'Remove'}
+                className="w-4 h-4 md:w-5 md:h-5 object-contain"
+              />
+            </button>
+          )}
+        </div>
+
+        <img
+          src="/tick-green.png"
+          alt="saved"
+          className={`pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 md:w-6 md:h-6 transition-opacity duration-300 ${
+            isSaved ? 'opacity-100' : 'opacity-0'
+          }`}
         />
-
-        {hasName && (
-          <button
-            onClick={() =>
-              isArmed ? onConfirmRemove(dayISO, time) : onArm(timeKey)
-            }
-            className={`shrink-0 w-8 h-8 md:w-9 md:h-9 rounded-lg grid place-items-center transition border ${
-              isArmed
-                ? 'bg-red-900/30 border-red-600/70'
-                : 'bg-neutral-900/60 hover:bg-neutral-800/70 border-neutral-700/50'
-            }`}
-            aria-label={isArmed ? 'Confirm remove' : 'Remove'}
-          >
-            <img
-              src={isArmed ? '/tick-green.png' : '/razor.png'}
-              alt={isArmed ? 'Confirm' : 'Remove'}
-              className="w-4 h-4 md:w-5 md:h-5 object-contain"
-            />
-          </button>
-        )}
       </div>
-
-      <img
-        src="/tick-green.png"
-        alt="saved"
-        className={`pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 md:w-6 md:h-6 transition-opacity duration-300 ${
-          isSaved ? 'opacity-100' : 'opacity-0'
-        }`}
-      />
-    </div>
-  );
-},
-// custom compare: only re-render if visual inputs changed
-(prev, next) =>
-  prev.value === next.value &&
-  prev.isSaved === next.isSaved &&
-  prev.isArmed === next.isArmed &&
-  prev.dayISO === next.dayISO &&
-  prev.time === next.time,
+    );
+  },
+  (prev, next) =>
+    prev.value === next.value &&
+    prev.isSaved === next.isSaved &&
+    prev.isArmed === next.isArmed &&
+    prev.dayISO === next.dayISO &&
+    prev.time === next.time,
 );
 
 // =============================================================================
@@ -350,7 +350,6 @@ function BarberCalendarCore() {
   }, [syncFromRemote]);
 
   // ✅ Performance polish: when day editor opens, immediately sync + short follow-up sync.
-  // This makes next/prev swipe feel "instant" because we already pulled latest store.
   const selectedDayISO = useMemo(
     () => (selectedDate ? toISODate(selectedDate) : null),
     [selectedDate],
@@ -367,16 +366,11 @@ function BarberCalendarCore() {
   useEffect(() => {
     if (!selectedDate) return;
 
-    // immediate sync (pull latest bookings)
     syncFromRemote();
-
-    // follow-up sync shortly after (covers cold start / racey first load)
     const t = window.setTimeout(() => {
       syncFromRemote();
     }, 650);
 
-    // Touch prev/next values so they're “warmed” in JS (tiny win, but free)
-    // (No state changes here, just access.)
     void prevDayISO;
     void nextDayISO;
 
@@ -702,7 +696,6 @@ function BarberCalendarCore() {
     [clearArmedTimeout],
   );
 
-  // Memoize the selected day’s map so the month grid rerender doesn’t repeatedly index store
   const selectedDayMap = useMemo(() => {
     if (!selectedDayISO) return {};
     return store[selectedDayISO] || {};
@@ -912,74 +905,71 @@ function BarberCalendarCore() {
           className="mt-[clamp(10px,2.2vw,20px)] flex-1 grid grid-cols-7 gap-[clamp(4px,2vw,16px)] overflow-visible pb-[clamp(24px,3.2vw,48px)]"
           style={{ fontFamily: BRAND.fontNumbers, gridAutoRows: '1fr' }}
         >
-          {monthMatrix(viewYear, viewMonth)
-            .flat()
-            .map((d) => {
-              const inMonth = d.getMonth() === viewMonth;
-              const key = toISODate(d);
-              const num = d.getDate();
-              const ratio = dayFillRatio(key, store);
-              const showBar = inMonth && ratio > 0;
-              const isFull = isDayFull(key, store);
-              const isToday = inMonth && key === todayISO;
+          {matrix.flat().map((d) => {
+            const inMonth = d.getMonth() === viewMonth;
+            const key = toISODate(d);
+            const num = d.getDate();
+            const ratio = dayFillRatio(key, store);
+            const showBar = inMonth && ratio > 0;
+            const isFull = isDayFull(key, store);
+            const isToday = inMonth && key === todayISO;
 
-              const cls = [
-                'rounded-2xl flex items-center justify-center bg-neutral-900 text-white border transition cursor-pointer',
-                'h-full w-full aspect-square md:aspect-auto p-[clamp(6px,1vw,20px)] focus:outline-none',
-                !inMonth
-                  ? 'border-neutral-800 opacity-40 hover:opacity-70'
-                  : isToday
-                    ? 'border-white/70 ring-2 ring-white/20'
-                    : 'border-neutral-700 hover:border-white/60',
-              ].join(' ');
+            const cls = [
+              'rounded-2xl flex items-center justify-center bg-neutral-900 text-white border transition cursor-pointer',
+              'h-full w-full aspect-square md:aspect-auto p-[clamp(6px,1vw,20px)] focus:outline-none',
+              !inMonth
+                ? 'border-neutral-800 opacity-40 hover:opacity-70'
+                : isToday
+                  ? 'border-white/70 ring-2 ring-white/20'
+                  : 'border-neutral-700 hover:border-white/60',
+            ].join(' ');
 
-              const barFillWidth = `${Math.round(ratio * 100)}%`;
+            const barFillWidth = `${Math.round(ratio * 100)}%`;
 
-              return (
-                <button key={key} onClick={() => openDay(d)} className={cls}>
-                  <div className="flex flex-col items-center justify-center gap-2 w-full">
-                    <span
-                      className={`select-none text-[clamp(17px,3.5vw,32px)] ${
-                        isToday ? 'font-extrabold' : ''
-                      }`}
-                      style={{ fontFamily: BRAND.fontNumbers }}
+            return (
+              <button key={key} onClick={() => openDay(d)} className={cls}>
+                <div className="flex flex-col items-center justify-center gap-2 w-full">
+                  <span
+                    className={`select-none text-[clamp(17px,3.5vw,32px)] ${
+                      isToday ? 'font-extrabold' : ''
+                    }`}
+                    style={{ fontFamily: BRAND.fontNumbers }}
+                  >
+                    {inMonth && isFull ? 'X' : num}
+                  </span>
+
+                  {showBar && (
+                    <div
+                      className="w-[92%] max-w-[180px] h-[10px] rounded-full overflow-hidden border"
+                      style={{
+                        borderColor: 'rgba(255,255,255,0.16)',
+                        background:
+                          'linear-gradient(to bottom, rgba(255,255,255,0.08), rgba(255,255,255,0.03))',
+                        boxShadow:
+                          '0 1px 0 rgba(255,255,255,0.10) inset, 0 10px 22px rgba(0,0,0,0.55) inset',
+                      }}
+                      aria-hidden="true"
                     >
-                      {inMonth && isFull ? 'X' : num}
-                    </span>
-
-                    {/* Loading-bar style progress */}
-                    {showBar && (
                       <div
-                        className="w-[92%] max-w-[180px] h-[10px] rounded-full overflow-hidden border"
+                        className="h-full rounded-full"
                         style={{
-                          borderColor: 'rgba(255,255,255,0.16)',
-                          background:
-                            'linear-gradient(to bottom, rgba(255,255,255,0.08), rgba(255,255,255,0.03))',
+                          width: barFillWidth,
+                          transition:
+                            'width 200ms cubic-bezier(0.25, 0.9, 0.25, 1)',
+                          backgroundImage:
+                            'repeating-linear-gradient(45deg, rgba(255,255,255,0.92) 0px, rgba(255,255,255,0.92) 10px, rgba(255,255,255,0.58) 10px, rgba(255,255,255,0.58) 20px)',
+                          backgroundSize: '36px 36px',
+                          animation: 'bushiBarMove 0.9s linear infinite',
                           boxShadow:
-                            '0 1px 0 rgba(255,255,255,0.10) inset, 0 10px 22px rgba(0,0,0,0.55) inset',
+                            '0 0 0 1px rgba(255,255,255,0.10) inset, 0 0 18px rgba(255,255,255,0.18)',
                         }}
-                        aria-hidden="true"
-                      >
-                        <div
-                          className="h-full rounded-full"
-                          style={{
-                            width: barFillWidth,
-                            transition:
-                              'width 200ms cubic-bezier(0.25, 0.9, 0.25, 1)',
-                            backgroundImage:
-                              'repeating-linear-gradient(45deg, rgba(255,255,255,0.92) 0px, rgba(255,255,255,0.92) 10px, rgba(255,255,255,0.58) 10px, rgba(255,255,255,0.58) 20px)',
-                            backgroundSize: '36px 36px',
-                            animation: 'bushiBarMove 0.9s linear infinite',
-                            boxShadow:
-                              '0 0 0 1px rgba(255,255,255,0.10) inset, 0 0 18px rgba(255,255,255,0.18)',
-                          }}
-                        />
-                      </div>
-                    )}
-                  </div>
-                </button>
-              );
-            })}
+                      />
+                    </div>
+                  )}
+                </div>
+              </button>
+            );
+          })}
         </div>
       </div>
 
@@ -987,19 +977,27 @@ function BarberCalendarCore() {
       {showYear && (
         <div
           className="fixed inset-0 z-40 flex items-center justify-center bg-black/70"
-          onMouseDown={() => setShowYear(false)}
-          onTouchStart={() => setShowYear(false)}
+          // ✅ close on CLICK/TOUCH END to prevent click-through (reopen / open day)
+          onClick={() => setShowYear(false)}
+          onTouchEnd={() => setShowYear(false)}
         >
           <div
             className="w-[min(100%-32px,820px)] max-w-xl rounded-3xl border border-neutral-800 bg-neutral-950/95 shadow-2xl px-6 py-6 sm:px-8 sm:py-8"
             style={yearStyle}
+            // ✅ stop all bubbling so outside doesn't close, and no weird reopen
+            onClick={(e) => e.stopPropagation()}
+            onTouchEnd={(e) => e.stopPropagation()}
             onMouseDown={(e) => e.stopPropagation()}
             onTouchStart={(e) => {
               e.stopPropagation();
               onYearTouchStart(e);
             }}
             onTouchMove={onYearTouchMove}
-            onTouchEnd={onYearTouchEnd}
+            onTouchEndCapture={(e) => {
+              // allow modal swipe end logic, but still stop outside close
+              e.stopPropagation();
+              onYearTouchEnd();
+            }}
           >
             <div className="flex items-center justify-center">
               <div
@@ -1046,23 +1044,18 @@ function BarberCalendarCore() {
             onTouchStart={(e) => e.stopPropagation()}
           >
             <div className="flex h-full flex-col">
-              {/* Header (tap on mobile closes) */}
+              {/* ✅ Header (tap closes on MOBILE + TABLET now) */}
               <div
-                className="flex items-center justify-between"
+                className="flex items-center justify-between cursor-pointer"
                 onMouseDown={(e) => {
-                  if (!isTabletOrBigger()) {
-                    e.stopPropagation();
-                    animateCloseDown();
-                  }
+                  e.stopPropagation();
+                  animateCloseDown();
                 }}
                 onTouchStart={(e) => {
-                  if (!isTabletOrBigger()) {
-                    e.stopPropagation();
-                    animateCloseDown();
-                  }
+                  e.stopPropagation();
+                  animateCloseDown();
                 }}
-                style={{ cursor: !isTabletOrBigger() ? 'pointer' : 'default' }}
-                title={!isTabletOrBigger() ? 'Tap to close' : undefined}
+                title="Tap to close"
               >
                 <h3
                   className="text-2xl md:text-3xl font-bold"
@@ -1087,9 +1080,14 @@ function BarberCalendarCore() {
                   style={{ gridAutoRows: 'minmax(32px,1fr)' }}
                 >
                   {DAY_SLOTS.map((time) => {
-                    const value = (selectedDayMap as Record<string, string>)[time] || '';
+                    const value =
+                      (selectedDayMap as Record<string, string>)[time] || '';
                     const isSaved =
-                      !!(savedPulse && savedPulse.day === selectedDayISO && savedPulse.time === time);
+                      !!(
+                        savedPulse &&
+                        savedPulse.day === selectedDayISO &&
+                        savedPulse.time === time
+                      );
                     const timeKey = `${selectedDayISO}_${time}`;
                     const isArmed = armedRemove === timeKey;
 
