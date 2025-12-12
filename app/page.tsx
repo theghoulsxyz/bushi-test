@@ -39,12 +39,15 @@ const toISODate = (d: Date) =>
 const addDays = (d: Date, delta: number) =>
   new Date(d.getFullYear(), d.getMonth(), d.getDate() + delta);
 
-// iOS-like rubber banding (resistance) for drag gestures
-function rubberBand(distance: number, dimension: number, constant = 0.55) {
-  const abs = Math.abs(distance);
+// Tight “iOS-like but not floaty” damped drag:
+// - near origin: 1:1
+// - after limit: reduced movement with factor (snappy, not gummy)
+function dampedDrag(distance: number, limit = 120, factor = 0.25) {
   const sign = distance < 0 ? -1 : 1;
-  const result = (abs * dimension * constant) / (dimension + constant * abs);
-  return sign * result;
+  const abs = Math.abs(distance);
+  if (abs <= limit) return distance;
+  const extra = abs - limit;
+  return sign * (limit + extra * factor);
 }
 
 function monthMatrix(year: number, month: number) {
@@ -277,10 +280,9 @@ function BarberCalendarCore() {
   const [panelStyle, setPanelStyle] = useState<React.CSSProperties>({});
   const gestureModeRef = useRef<'none' | 'horizontal' | 'vertical'>('none');
 
-  const SWIPE_THRESHOLD = 48; // px
-  const VERTICAL_CLOSE_THRESHOLD = 90; // px
-
-  const IOS_EASE = 'cubic-bezier(0.22, 1, 0.36, 1)';
+  const SWIPE_THRESHOLD = 52; // px (slightly higher = more intentional)
+  const VERTICAL_CLOSE_THRESHOLD = 95; // px
+  const SNAP_EASE = 'cubic-bezier(0.25, 0.9, 0.25, 1)'; // snappy, not floaty
 
   const isTabletOrBigger = () =>
     typeof window !== 'undefined' &&
@@ -309,39 +311,39 @@ function BarberCalendarCore() {
 
   const animateShift = (delta: number) => {
     setSwipeStyle({
-      transform: `translateX(${delta > 0 ? -26 : 26}px)`,
-      opacity: 0.35,
-      transition: `transform 200ms ${IOS_EASE}, opacity 200ms ${IOS_EASE}`,
+      transform: `translateX(${delta > 0 ? -22 : 22}px)`,
+      opacity: 0.55,
+      transition: `transform 140ms ${SNAP_EASE}, opacity 140ms ${SNAP_EASE}`,
     });
     setTimeout(() => {
       shiftSelectedDay(delta);
       setSwipeStyle({
-        transform: `translateX(${delta > 0 ? 26 : -26}px)`,
-        opacity: 0.35,
+        transform: `translateX(${delta > 0 ? 22 : -22}px)`,
+        opacity: 0.55,
         transition: 'none',
       });
       requestAnimationFrame(() => {
         setSwipeStyle({
           transform: 'translateX(0)',
           opacity: 1,
-          transition: `transform 220ms ${IOS_EASE}, opacity 220ms ${IOS_EASE}`,
+          transition: `transform 160ms ${SNAP_EASE}, opacity 160ms ${SNAP_EASE}`,
         });
       });
-    }, 200);
+    }, 140);
   };
 
   const animateCloseDown = () => {
     setPanelStyle({
-      transform: 'translateY(220px) scale(0.995)',
+      transform: 'translateY(160px)',
       opacity: 0,
-      transition: `transform 240ms ${IOS_EASE}, opacity 200ms ${IOS_EASE}`,
+      transition: `transform 170ms ${SNAP_EASE}, opacity 150ms ${SNAP_EASE}`,
     });
     setTimeout(() => {
       setSelectedDate(null);
       setPanelStyle({});
       setSwipeStyle({});
       gestureModeRef.current = 'none';
-    }, 240);
+    }, 170);
   };
 
   const matrix = useMemo(
@@ -432,7 +434,7 @@ function BarberCalendarCore() {
     return () => window.removeEventListener('keydown', onKey);
   }, [selectedDate]);
 
-  // touch handlers: iOS-like rubberband + spring
+  // touch handlers: tight damped drag + snappy snap
   const onTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
     swipeStartX.current = e.touches[0].clientX;
     swipeStartY.current = e.touches[0].clientY;
@@ -455,9 +457,9 @@ function BarberCalendarCore() {
     const absX = Math.abs(dxRaw);
     const absY = Math.abs(dyRaw);
 
-    // decide gesture mode once
+    // decide gesture mode once (prevents fighting)
     if (gestureModeRef.current === 'none') {
-      if (isTabletOrBigger() && dyRaw > 0 && absY > absX * 1.15) {
+      if (isTabletOrBigger() && dyRaw > 0 && absY > absX * 1.2) {
         gestureModeRef.current = 'vertical';
       } else if (absX > absY) {
         gestureModeRef.current = 'horizontal';
@@ -465,12 +467,10 @@ function BarberCalendarCore() {
     }
 
     if (gestureModeRef.current === 'vertical') {
-      // rubberband down + slight scale + fade (iOS-like)
-      const dy = rubberBand(Math.max(dyRaw, 0), 360, 0.62);
-      const opacity = Math.max(0.25, 1 - dy / 420);
-      const scale = 1 - Math.min(0.01, dy / 26000); // tiny shrink
+      const dy = dampedDrag(Math.max(dyRaw, 0), 140, 0.22);
+      const opacity = Math.max(0.7, 1 - dy / 520); // subtle only
       setPanelStyle({
-        transform: `translateY(${dy}px) scale(${scale})`,
+        transform: `translateY(${dy}px)`,
         opacity,
         transition: 'none',
       });
@@ -479,8 +479,7 @@ function BarberCalendarCore() {
     }
 
     if (gestureModeRef.current === 'horizontal') {
-      // rubberband both directions (but normal near center)
-      const dx = rubberBand(dxRaw, 420, 0.6);
+      const dx = dampedDrag(dxRaw, 120, 0.28);
       setSwipeStyle({ transform: `translateX(${dx}px)`, transition: 'none' });
       return;
     }
@@ -501,13 +500,12 @@ function BarberCalendarCore() {
       if (isTabletOrBigger() && dy >= VERTICAL_CLOSE_THRESHOLD) {
         animateCloseDown();
       } else {
-        // spring back (iOS-ish)
         setPanelStyle({
-          transform: 'translateY(0) scale(1)',
+          transform: 'translateY(0)',
           opacity: 1,
-          transition: `transform 260ms ${IOS_EASE}, opacity 220ms ${IOS_EASE}`,
+          transition: `transform 160ms ${SNAP_EASE}, opacity 140ms ${SNAP_EASE}`,
         });
-        setTimeout(() => setPanelStyle({}), 260);
+        setTimeout(() => setPanelStyle({}), 160);
       }
       gestureModeRef.current = 'none';
       return;
@@ -519,7 +517,7 @@ function BarberCalendarCore() {
       } else {
         setSwipeStyle({
           transform: 'translateX(0)',
-          transition: `transform 260ms ${IOS_EASE}`,
+          transition: `transform 170ms ${SNAP_EASE}`,
         });
       }
       gestureModeRef.current = 'none';
@@ -529,14 +527,14 @@ function BarberCalendarCore() {
     // no gesture: reset
     setSwipeStyle({
       transform: 'translateX(0)',
-      transition: `transform 220ms ${IOS_EASE}`,
+      transition: `transform 160ms ${SNAP_EASE}`,
     });
     setPanelStyle({
-      transform: 'translateY(0) scale(1)',
+      transform: 'translateY(0)',
       opacity: 1,
-      transition: `transform 220ms ${IOS_EASE}, opacity 220ms ${IOS_EASE}`,
+      transition: `transform 160ms ${SNAP_EASE}, opacity 160ms ${SNAP_EASE}`,
     });
-    setTimeout(() => setPanelStyle({}), 220);
+    setTimeout(() => setPanelStyle({}), 160);
   };
 
   return (
@@ -558,7 +556,7 @@ function BarberCalendarCore() {
 
           <button
             onClick={() => setShowYear(true)}
-            className="text-3xl sm:text-4xl md:text-7xl font-bold cursor-pointer hover:text-gray-300 select-none text-right flex-1"
+            className="text-3xl sm:text-4xl md:text-7xl font-bold cursor-pointer hover:text-gray-300 select-none text-right flex-1 min-w-0 whitespace-nowrap"
             style={{ fontFamily: BRAND.fontTitle }}
             title="Open year view"
           >
@@ -848,12 +846,9 @@ export default function BarbershopAdminPanel() {
   if (!unlocked) {
     return (
       <div className="fixed inset-0 flex items-center justify-center bg-black text-white overflow-hidden">
-        {/* Ambient glow background */}
         <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(255,255,255,0.16)_0,_transparent_55%),radial-gradient(circle_at_bottom,_rgba(255,255,255,0.12)_0,_transparent_55%)]" />
 
-        {/* Card */}
         <div className="relative w-[min(100%-40px,420px)] rounded-[32px] border border-white/10 bg-[rgba(8,8,8,0.9)] backdrop-blur-xl px-7 py-8 shadow-[0_24px_80px_rgba(0,0,0,0.9)]">
-          {/* Small label */}
           <div className="mb-4 flex justify-center">
             <span
               className="inline-flex items-center justify-center rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[10px] uppercase tracking-[0.22em] text-neutral-300"
@@ -863,7 +858,6 @@ export default function BarbershopAdminPanel() {
             </span>
           </div>
 
-          {/* Logo wordmark */}
           <div className="mb-4 flex justify-center">
             <img
               src="/bush.png"
@@ -879,7 +873,6 @@ export default function BarbershopAdminPanel() {
           </p>
 
           <form onSubmit={handleSubmit} className="space-y-4">
-            {/* Input wrapper */}
             <div className="rounded-2xl bg-neutral-900/80 border border-white/12 px-4 py-3 flex items-center focus-within:border-white/70 transition">
               <input
                 type="password"
