@@ -59,15 +59,7 @@ function monthMatrix(year: number, month: number) {
 
 // Bulgarian weekdays
 // Monday = 0 (using (getDay()+6)%7 remap)
-const WEEKDAYS_SHORT = [
-  'Пон',
-  'Вто',
-  'Сря',
-  'Чет',
-  'Пет',
-  'Съб',
-  'Нед',
-];
+const WEEKDAYS_SHORT = ['Пон', 'Вто', 'Сря', 'Чет', 'Пет', 'Съб', 'Нед'];
 
 const WEEKDAYS_FULL = [
   'Понеделник',
@@ -275,10 +267,7 @@ function BarberCalendarCore() {
     setSelectedDate((prev) => {
       if (!prev) return prev;
       const next = addDays(prev, delta);
-      if (
-        next.getFullYear() !== viewYear ||
-        next.getMonth() !== viewMonth
-      ) {
+      if (next.getFullYear() !== viewYear || next.getMonth() !== viewMonth) {
         setViewYear(next.getFullYear());
         setViewMonth(next.getMonth());
       }
@@ -349,9 +338,7 @@ function BarberCalendarCore() {
 
     setSavedPulse({ day, time, ts: Date.now() });
     setTimeout(() => {
-      setSavedPulse((p) =>
-        p && p.day === day && p.time === time ? null : p,
-      );
+      setSavedPulse((p) => (p && p.day === day && p.time === time ? null : p));
     }, 900);
     setArmedRemove(null);
   };
@@ -493,11 +480,7 @@ function BarberCalendarCore() {
                   : 'border-neutral-700 hover:border-white/60',
             ].join(' ');
             return (
-              <button
-                key={key}
-                onClick={() => openDay(d)}
-                className={cls}
-              >
+              <button key={key} onClick={() => openDay(d)} className={cls}>
                 <span
                   className={`select-none text-[clamp(17px,3.5vw,32px)] ${
                     isToday ? 'font-extrabold' : ''
@@ -565,7 +548,7 @@ function BarberCalendarCore() {
                     setViewMonth(idx);
                     setShowYear(false);
                   }}
-                  className={`h-11 sm:h-12 rounded-2xl border text-[13px] sm:text-[14px] tracking-[0.12em] uppercase flex items-center justify-center transition ${
+                  className={`h-11 sm:h-12 rounded-2xl border whitespace-nowrap px-2 text-[clamp(11px,1.6vw,14px)] tracking-[0.10em] flex items-center justify-center transition ${
                     idx === viewMonth
                       ? 'border-white text-white bg-neutral-900'
                       : 'border-neutral-700/70 text-neutral-200 bg-neutral-900/50 hover:bg-neutral-800'
@@ -598,8 +581,7 @@ function BarberCalendarCore() {
                   style={{ fontFamily: BRAND.fontTitle }}
                 >
                   {WEEKDAYS_FULL[(selectedDate.getDay() + 6) % 7]}{' '}
-                  {selectedDate.getDate()}{' '}
-                  {MONTHS[selectedDate.getMonth()]}{' '}
+                  {selectedDate.getDate()} {MONTHS[selectedDate.getMonth()]}{' '}
                   {selectedDate.getFullYear()}
                 </h3>
                 <button
@@ -626,8 +608,7 @@ function BarberCalendarCore() {
                   {(() => {
                     const dayISO = toISODate(selectedDate);
                     return DAY_SLOTS.map((time) => {
-                      const value =
-                        (store[dayISO] && store[dayISO][time]) || '';
+                      const value = (store[dayISO] && store[dayISO][time]) || '';
                       const hasName = (value || '').trim().length > 0;
                       const isSaved =
                         !!(
@@ -655,21 +636,13 @@ function BarberCalendarCore() {
                               defaultValue={value}
                               onKeyDown={(e) => {
                                 if (e.key === 'Enter') {
-                                  const v = (
-                                    e.target as HTMLInputElement
-                                  ).value;
+                                  const v = (e.target as HTMLInputElement).value;
                                   saveName(dayISO, time, v);
-                                  (
-                                    e.target as HTMLInputElement
-                                  ).blur();
+                                  (e.target as HTMLInputElement).blur();
                                 }
                               }}
                               onBlur={(e) =>
-                                saveName(
-                                  dayISO,
-                                  time,
-                                  e.currentTarget.value,
-                                )
+                                saveName(dayISO, time, e.currentTarget.value)
                               }
                               className="block w-full text-white bg-[rgb(10,10,10)] border border-neutral-700/70 focus:border-white/70 focus:outline-none focus:ring-0 rounded-lg px-3 py-1.5 text-center transition-all duration-200"
                               style={{ fontFamily: BRAND.fontBody }}
@@ -687,18 +660,10 @@ function BarberCalendarCore() {
                                     ? 'bg-red-900/30 border-red-600/70'
                                     : 'bg-neutral-900/60 hover:bg-neutral-800/70 border-neutral-700/50'
                                 }`}
-                                aria-label={
-                                  isArmed
-                                    ? 'Confirm remove'
-                                    : 'Remove'
-                                }
+                                aria-label={isArmed ? 'Confirm remove' : 'Remove'}
                               >
                                 <img
-                                  src={
-                                    isArmed
-                                      ? '/tick-green.png'
-                                      : '/razor.png'
-                                  }
+                                  src={isArmed ? '/tick-green.png' : '/razor.png'}
                                   alt={isArmed ? 'Confirm' : 'Remove'}
                                   className="w-4 h-4 md:w-5 md:h-5 object-contain"
                                 />
