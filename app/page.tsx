@@ -435,7 +435,7 @@ function BarberCalendarCore() {
           <img
             src={BRAND.logoLight}
             alt="logo"
-            className="h-72 md:h-[22rem] w-auto cursor-pointer shrink-0"
+            className="h-56 sm:h-64 md:h-[22rem] w-auto cursor-pointer shrink-0"
             onClick={() => {
               const now = new Date();
               setViewYear(now.getFullYear());
@@ -444,8 +444,12 @@ function BarberCalendarCore() {
           />
           <button
             onClick={() => setShowYear(true)}
-            className="min-w-0 flex-1 text-3xl sm:text-4xl md:text-7xl font-bold cursor-pointer hover:text-gray-300 select-none text-right whitespace-nowrap overflow-hidden text-ellipsis leading-none"
-            style={{ fontFamily: BRAND.fontTitle }}
+            className="flex-1 min-w-0 font-bold cursor-pointer hover:text-gray-300 select-none text-right whitespace-nowrap"
+            style={{
+              fontFamily: BRAND.fontTitle,
+              fontSize: 'clamp(28px, 5.2vw, 112px)',
+              lineHeight: 1,
+            }}
             title="Open year view"
           >
             {monthLabel}
@@ -616,13 +620,15 @@ function BarberCalendarCore() {
                   {(() => {
                     const dayISO = toISODate(selectedDate);
                     return DAY_SLOTS.map((time) => {
-                      const value = (store[dayISO] && store[dayISO][time]) || '';
+                      const value =
+                        (store[dayISO] && store[dayISO][time]) || '';
                       const hasName = (value || '').trim().length > 0;
-                      const isSaved = !!(
-                        savedPulse &&
-                        savedPulse.day === dayISO &&
-                        savedPulse.time === time
-                      );
+                      const isSaved =
+                        !!(
+                          savedPulse &&
+                          savedPulse.day === dayISO &&
+                          savedPulse.time === time
+                        );
                       const timeKey = `${dayISO}_${time}`;
                       const isArmed = armedRemove === timeKey;
                       return (
@@ -643,13 +649,21 @@ function BarberCalendarCore() {
                               defaultValue={value}
                               onKeyDown={(e) => {
                                 if (e.key === 'Enter') {
-                                  const v = (e.target as HTMLInputElement).value;
+                                  const v = (
+                                    e.target as HTMLInputElement
+                                  ).value;
                                   saveName(dayISO, time, v);
-                                  (e.target as HTMLInputElement).blur();
+                                  (
+                                    e.target as HTMLInputElement
+                                  ).blur();
                                 }
                               }}
                               onBlur={(e) =>
-                                saveName(dayISO, time, e.currentTarget.value)
+                                saveName(
+                                  dayISO,
+                                  time,
+                                  e.currentTarget.value,
+                                )
                               }
                               className="block w-full text-white bg-[rgb(10,10,10)] border border-neutral-700/70 focus:border-white/70 focus:outline-none focus:ring-0 rounded-lg px-3 py-1.5 text-center transition-all duration-200"
                               style={{ fontFamily: BRAND.fontBody }}
@@ -667,10 +681,18 @@ function BarberCalendarCore() {
                                     ? 'bg-red-900/30 border-red-600/70'
                                     : 'bg-neutral-900/60 hover:bg-neutral-800/70 border-neutral-700/50'
                                 }`}
-                                aria-label={isArmed ? 'Confirm remove' : 'Remove'}
+                                aria-label={
+                                  isArmed
+                                    ? 'Confirm remove'
+                                    : 'Remove'
+                                }
                               >
                                 <img
-                                  src={isArmed ? '/tick-green.png' : '/razor.png'}
+                                  src={
+                                    isArmed
+                                      ? '/tick-green.png'
+                                      : '/razor.png'
+                                  }
                                   alt={isArmed ? 'Confirm' : 'Remove'}
                                   className="w-4 h-4 md:w-5 md:h-5 object-contain"
                                 />
