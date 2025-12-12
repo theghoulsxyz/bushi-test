@@ -39,7 +39,8 @@ const toISODate = (d: Date) =>
 const addDays = (d: Date, delta: number) =>
   new Date(d.getFullYear(), d.getMonth(), d.getDate() + delta);
 
-const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
+const clamp = (v: number, min: number, max: number) =>
+  Math.max(min, Math.min(max, v));
 
 function monthMatrix(year: number, month: number) {
   const first = new Date(year, month, 1);
@@ -58,6 +59,9 @@ function monthMatrix(year: number, month: number) {
 // =============================================================================
 // Weekdays / Months (Bulgarian)
 // =============================================================================
+
+// Bulgarian weekdays
+// Monday = 0 (using (getDay()+6)%7 remap)
 const WEEKDAYS_SHORT = ['Пон', 'Вто', 'Сря', 'Чет', 'Пет', 'Съб', 'Нед'];
 
 const WEEKDAYS_FULL = [
@@ -70,6 +74,7 @@ const WEEKDAYS_FULL = [
   'Неделя',
 ];
 
+// Bulgarian months (Capitalized)
 const MONTHS = [
   'Януари',
   'Февруари',
@@ -143,7 +148,7 @@ async function pushRemoteStore(data: Store): Promise<void> {
       body: JSON.stringify(data),
     });
   } catch {
-    // fail silently
+    // fail silently; Supabase is the only source, but network errors will just not sync
   }
 }
 
@@ -193,28 +198,23 @@ function BarberCalendarCore() {
   const [store, setStore] = useState<Store>({});
   const lastLocalChangeRef = useRef<number | null>(null);
 
-  // Manual / periodic remote sync (Supabase is source of truth)
-  const remoteCancelledRef = useRef(false);
-  const remoteSyncInFlightRef = useRef(false);
+  const cancelledSyncRef = useRef(false);
 
   const syncFromRemote = async () => {
-    if (remoteSyncInFlightRef.current) return;
-    remoteSyncInFlightRef.current = true;
-    try {
-      const remote = await fetchRemoteStore();
-      if (!remote || remoteCancelledRef.current) return;
-      setStore(remote);
-    } finally {
-      remoteSyncInFlightRef.current = false;
-    }
+    const remote = await fetchRemoteStore();
+    if (!remote || cancelledSyncRef.current) return;
+    // Remote is source of truth
+    setStore(remote);
   };
 
   // 🔄 Load from Supabase on first render, on visibility, and every few seconds
   useEffect(() => {
-    remoteCancelledRef.current = false;
+    cancelledSyncRef.current = false;
 
+    // 1) Initial load
     syncFromRemote();
 
+    // 2) Every time the document becomes visible again
     const handleVisibility = () => {
       if (document.visibilityState === 'visible') {
         syncFromRemote();
@@ -225,10 +225,11 @@ function BarberCalendarCore() {
       document.addEventListener('visibilitychange', handleVisibility);
     }
 
-    const interval = setInterval(syncFromRemote, 4000);
+    // 3) Periodic sync (approx. realtime between devices)
+    const interval = setInterval(syncFromRemote, 4000); // every 4 seconds
 
     return () => {
-      remoteCancelledRef.current = true;
+      cancelledSyncRef.current = true;
       if (typeof document !== 'undefined') {
         document.removeEventListener('visibilitychange', handleVisibility);
       }
@@ -259,13 +260,13 @@ function BarberCalendarCore() {
     ts: number;
   } | null>(null);
 
-  // gesture state
+  // gesture state for iOS-like (1:1) day navigation on touch devices
   const swipeStartX = useRef<number | null>(null);
   const swipeStartY = useRef<number | null>(null);
   const swipeDX = useRef<number>(0);
   const swipeDY = useRef<number>(0);
 
-  // Horizontal day sliding style (applied to content)
+  // Horizontal day sliding style (applied to the scrollable content)
   const [swipeStyle, setSwipeStyle] = useState<React.CSSProperties>({});
   // Vertical close animation style (applied to the whole panel)
   const [panelStyle, setPanelStyle] = useState<React.CSSProperties>({});
@@ -339,73 +340,6 @@ function BarberCalendarCore() {
       setSwipeStyle({});
       gestureModeRef.current = 'none';
     }, 170);
-  };
-
-  const matrix = useMemo(
-    () => monthMatrix(viewYear, viewMonth),
-    [viewYear, viewMonth],
-  );
-
-  // Allow clicking grey days; update month/year if needed
-  const openDay = (d: Date) => {
-    if (d.getFullYear() !== viewYear || d.getMonth() !== viewMonth) {
-      setViewYear(d.getFullYear());
-      setViewMonth(d.getMonth());
-    }
-    setSelectedDate(d);
-  };
-
-  const monthLabel = `${MONTHS[viewMonth]} ${viewYear}`;
-
-  // ===== Save / Delete with synced push to Supabase =====
-  const saveName = (day: string, time: string, nameRaw: string) => {
-    const name = nameRaw.trim();
-    setStore((prev) => {
-      const next: Store = { ...prev };
-      if (!next[day]) next[day] = {};
-
-      if (name === '') {
-        if (next[day]) delete next[day][time];
-        if (next[day] && Object.keys(next[day]).length === 0) {
-          delete next[day];
-        }
-      } else {
-        next[day][time] = name;
-      }
-
-      lastLocalChangeRef.current = Date.now();
-      pushRemoteStore(next);
-
-      return next;
-    });
-
-    setSavedPulse({ day, time, ts: Date.now() });
-    setTimeout(() => {
-      setSavedPulse((p) =>
-        p && p.day === day && p.time === time ? null : p,
-      );
-    }, 900);
-    setArmedRemove(null);
-  };
-
-  const armRemove = (timeKey: string) => setArmedRemove(timeKey);
-
-  const confirmRemove = (day: string, time: string) => {
-    setStore((prev) => {
-      const next: Store = { ...prev };
-      if (next[day]) {
-        delete next[day][time];
-        if (Object.keys(next[day]).length === 0) {
-          delete next[day];
-        }
-      }
-
-      lastLocalChangeRef.current = Date.now();
-      pushRemoteStore(next);
-
-      return next;
-    });
-    setArmedRemove(null);
   };
 
   // Day navigation helpers
@@ -532,6 +466,227 @@ function BarberCalendarCore() {
     setTimeout(() => setPanelStyle({}), 160);
   };
 
+  const matrix = useMemo(() => monthMatrix(viewYear, viewMonth), [viewYear, viewMonth]);
+
+  // Allow clicking grey days; update month/year if needed
+  const openDay = (d: Date) => {
+    if (d.getFullYear() !== viewYear || d.getMonth() !== viewMonth) {
+      setViewYear(d.getFullYear());
+      setViewMonth(d.getMonth());
+    }
+    setSelectedDate(d);
+  };
+
+  const monthLabel = `${MONTHS[viewMonth]} ${viewYear}`;
+
+  // ===== Save / Delete with synced push to Supabase =====
+  const saveName = (day: string, time: string, nameRaw: string) => {
+    const name = nameRaw.trim();
+    setStore((prev) => {
+      const next: Store = { ...prev };
+      if (!next[day]) next[day] = {};
+
+      if (name === '') {
+        if (next[day]) delete next[day][time];
+        if (next[day] && Object.keys(next[day]).length === 0) {
+          delete next[day];
+        }
+      } else {
+        next[day][time] = name;
+      }
+
+      lastLocalChangeRef.current = Date.now();
+      pushRemoteStore(next);
+
+      return next;
+    });
+
+    setSavedPulse({ day, time, ts: Date.now() });
+    setTimeout(() => {
+      setSavedPulse((p) => (p && p.day === day && p.time === time ? null : p));
+    }, 900);
+    setArmedRemove(null);
+  };
+
+  const armRemove = (timeKey: string) => setArmedRemove(timeKey);
+
+  const confirmRemove = (day: string, time: string) => {
+    setStore((prev) => {
+      const next: Store = { ...prev };
+      if (next[day]) {
+        delete next[day][time];
+        if (Object.keys(next[day]).length === 0) {
+          delete next[day];
+        }
+      }
+
+      lastLocalChangeRef.current = Date.now();
+      pushRemoteStore(next);
+
+      return next;
+    });
+    setArmedRemove(null);
+  };
+
+  // =============================================================================
+  // Year Modal gestures (1:1 drag)
+  // - swipe left/right to change year
+  // - swipe down to close
+  // =============================================================================
+  const yearStartX = useRef<number | null>(null);
+  const yearStartY = useRef<number | null>(null);
+  const yearDX = useRef<number>(0);
+  const yearDY = useRef<number>(0);
+  const yearModeRef = useRef<'none' | 'horizontal' | 'vertical'>('none');
+  const [yearStyle, setYearStyle] = useState<React.CSSProperties>({});
+
+  const YEAR_SWIPE_THRESHOLD = 70; // px
+  const YEAR_CLOSE_THRESHOLD = 95; // px
+  const YEAR_H_CLAMP = 220;
+  const YEAR_V_CLAMP = 240;
+
+  useEffect(() => {
+    if (!showYear) return;
+    setYearStyle({});
+    yearModeRef.current = 'none';
+    yearStartX.current = null;
+    yearStartY.current = null;
+    yearDX.current = 0;
+    yearDY.current = 0;
+  }, [showYear, viewYear]);
+
+  const animateYearShift = (deltaYear: number) => {
+    setYearStyle({
+      transform: `translateX(${deltaYear > 0 ? -22 : 22}px)`,
+      opacity: 0.55,
+      transition: `transform 140ms ${SNAP_EASE}, opacity 140ms ${SNAP_EASE}`,
+    });
+    setTimeout(() => {
+      setViewYear((y) => y + deltaYear);
+      setYearStyle({
+        transform: `translateX(${deltaYear > 0 ? 22 : -22}px)`,
+        opacity: 0.55,
+        transition: 'none',
+      });
+      requestAnimationFrame(() => {
+        setYearStyle({
+          transform: 'translateX(0)',
+          opacity: 1,
+          transition: `transform 160ms ${SNAP_EASE}, opacity 160ms ${SNAP_EASE}`,
+        });
+      });
+    }, 140);
+  };
+
+  const animateYearCloseDown = () => {
+    setYearStyle({
+      transform: 'translateY(160px)',
+      opacity: 0,
+      transition: `transform 170ms ${SNAP_EASE}, opacity 150ms ${SNAP_EASE}`,
+    });
+    setTimeout(() => {
+      setShowYear(false);
+      setYearStyle({});
+      yearModeRef.current = 'none';
+    }, 170);
+  };
+
+  const onYearTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
+    yearStartX.current = e.touches[0].clientX;
+    yearStartY.current = e.touches[0].clientY;
+    yearDX.current = 0;
+    yearDY.current = 0;
+    yearModeRef.current = 'none';
+    setYearStyle({ transition: 'none' });
+  };
+
+  const onYearTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (yearStartX.current == null || yearStartY.current == null) return;
+
+    const dxRaw = e.touches[0].clientX - yearStartX.current;
+    const dyRaw = e.touches[0].clientY - yearStartY.current;
+
+    yearDX.current = dxRaw;
+    yearDY.current = dyRaw;
+
+    const absX = Math.abs(dxRaw);
+    const absY = Math.abs(dyRaw);
+
+    if (yearModeRef.current === 'none') {
+      if (dyRaw > 0 && absY > absX * 1.2) {
+        yearModeRef.current = 'vertical';
+      } else if (absX > absY) {
+        yearModeRef.current = 'horizontal';
+      }
+    }
+
+    if (yearModeRef.current === 'vertical') {
+      const dy = clamp(Math.max(dyRaw, 0), 0, YEAR_V_CLAMP);
+      const opacity = Math.max(0.75, 1 - dy / 640);
+      setYearStyle({
+        transform: `translateY(${dy}px)`,
+        opacity,
+        transition: 'none',
+      });
+      return;
+    }
+
+    if (yearModeRef.current === 'horizontal') {
+      const dx = clamp(dxRaw, -YEAR_H_CLAMP, YEAR_H_CLAMP);
+      setYearStyle({
+        transform: `translateX(${dx}px)`,
+        transition: 'none',
+      });
+      return;
+    }
+  };
+
+  const onYearTouchEnd = () => {
+    if (yearStartX.current == null) return;
+
+    const dx = yearDX.current;
+    const dy = yearDY.current;
+
+    yearStartX.current = null;
+    yearStartY.current = null;
+    yearDX.current = 0;
+    yearDY.current = 0;
+
+    if (yearModeRef.current === 'vertical') {
+      if (dy >= YEAR_CLOSE_THRESHOLD) {
+        animateYearCloseDown();
+      } else {
+        setYearStyle({
+          transform: 'translateY(0)',
+          opacity: 1,
+          transition: `transform 160ms ${SNAP_EASE}, opacity 140ms ${SNAP_EASE}`,
+        });
+        setTimeout(() => setYearStyle({}), 160);
+      }
+      yearModeRef.current = 'none';
+      return;
+    }
+
+    if (yearModeRef.current === 'horizontal') {
+      if (Math.abs(dx) >= YEAR_SWIPE_THRESHOLD) {
+        animateYearShift(dx > 0 ? -1 : 1);
+      } else {
+        setYearStyle({
+          transform: 'translateX(0)',
+          transition: `transform 170ms ${SNAP_EASE}`,
+        });
+      }
+      yearModeRef.current = 'none';
+      return;
+    }
+
+    setYearStyle({
+      transform: 'translateX(0)',
+      transition: `transform 160ms ${SNAP_EASE}`,
+    });
+    yearModeRef.current = 'none';
+  };
+
   return (
     <div className="fixed inset-0 w-full h-dvh bg-black text-white overflow-hidden">
       <div className="max-w-screen-2xl mx-auto px-[clamp(12px,2.5vw,40px)] pt-[clamp(12px,2.5vw,40px)] pb-[clamp(8px,2vw,24px)] h-full flex flex-col select-none">
@@ -545,10 +700,9 @@ function BarberCalendarCore() {
               const now = new Date();
               setViewYear(now.getFullYear());
               setViewMonth(now.getMonth());
-              syncFromRemote();
+              syncFromRemote(); // manual refresh
             }}
           />
-
           <button
             onClick={() => setShowYear(true)}
             className="text-3xl sm:text-4xl md:text-7xl font-bold cursor-pointer hover:text-gray-300 select-none text-right flex-1 min-w-0 whitespace-nowrap"
@@ -615,44 +769,30 @@ function BarberCalendarCore() {
         <div
           className="fixed inset-0 z-40 flex items-center justify-center bg-black/70"
           onMouseDown={() => setShowYear(false)}
+          onTouchStart={() => setShowYear(false)}
         >
           <div
             className="w-[min(100%-32px,820px)] max-w-xl rounded-3xl border border-neutral-800 bg-neutral-950/95 shadow-2xl px-6 py-6 sm:px-8 sm:py-8"
+            style={yearStyle}
             onMouseDown={(e) => e.stopPropagation()}
-            onTouchStart={(e) => e.stopPropagation()}
+            onTouchStart={(e) => {
+              e.stopPropagation();
+              onYearTouchStart(e);
+            }}
+            onTouchMove={onYearTouchMove}
+            onTouchEnd={onYearTouchEnd}
           >
-            <div className="flex items-center justify-between gap-4">
-              <div className="flex items-center gap-3">
-                <button
-                  onClick={() => setViewYear((y) => y - 1)}
-                  className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-neutral-700/70 bg-neutral-900/80 hover:bg-neutral-800 text-sm"
-                  aria-label="Previous year"
-                >
-                  ‹
-                </button>
-                <div
-                  className="text-[clamp(26px,5vw,40px)] leading-none"
-                  style={{ fontFamily: BRAND.fontTitle }}
-                >
-                  {viewYear}
-                </div>
-                <button
-                  onClick={() => setViewYear((y) => y + 1)}
-                  className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-neutral-700/70 bg-neutral-900/80 hover:bg-neutral-800 text-sm"
-                  aria-label="Next year"
-                >
-                  ›
-                </button>
-              </div>
-              <button
-                onClick={() => setShowYear(false)}
-                className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-neutral-700/70 bg-neutral-900/80 hover:bg-neutral-800 transition"
-                aria-label="Close"
+            {/* Header (gesture-only) */}
+            <div className="flex items-center justify-center">
+              <div
+                className="text-[clamp(30px,6vw,44px)] leading-none select-none"
+                style={{ fontFamily: BRAND.fontTitle }}
               >
-                ✕
-              </button>
+                {viewYear}
+              </div>
             </div>
 
+            {/* Months grid */}
             <div className="mt-6 grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-4">
               {MONTHS.map((label, idx) => (
                 <button
@@ -695,7 +835,8 @@ function BarberCalendarCore() {
                   style={{ fontFamily: BRAND.fontTitle }}
                 >
                   {WEEKDAYS_FULL[(selectedDate.getDay() + 6) % 7]}{' '}
-                  {selectedDate.getDate()} {MONTHS[selectedDate.getMonth()]}{' '}
+                  {selectedDate.getDate()}{' '}
+                  {MONTHS[selectedDate.getMonth()]}{' '}
                   {selectedDate.getFullYear()}
                 </h3>
                 <button
@@ -707,6 +848,7 @@ function BarberCalendarCore() {
                 </button>
               </div>
 
+              {/* Content area: scrollable on phone, fixed on tablet/desktop */}
               <div
                 className="mt-4 flex-1 overflow-y-auto md:overflow-visible"
                 onTouchStart={onTouchStart}
@@ -723,16 +865,14 @@ function BarberCalendarCore() {
                     return DAY_SLOTS.map((time) => {
                       const value = (store[dayISO] && store[dayISO][time]) || '';
                       const hasName = (value || '').trim().length > 0;
-                      const isSaved = !!(
-                        savedPulse &&
-                        savedPulse.day === dayISO &&
-                        savedPulse.time === time
-                      );
+                      const isSaved =
+                        !!(
+                          savedPulse &&
+                          savedPulse.day === dayISO &&
+                          savedPulse.time === time
+                        );
                       const timeKey = `${dayISO}_${time}`;
                       const isArmed = armedRemove === timeKey;
-
-                      const saveNow = (v: string) => saveName(dayISO, time, v);
-
                       return (
                         <div
                           key={timeKey}
@@ -752,11 +892,13 @@ function BarberCalendarCore() {
                               onKeyDown={(e) => {
                                 if (e.key === 'Enter') {
                                   const v = (e.target as HTMLInputElement).value;
-                                  saveNow(v);
+                                  saveName(dayISO, time, v);
                                   (e.target as HTMLInputElement).blur();
                                 }
                               }}
-                              onBlur={(e) => saveNow(e.currentTarget.value)}
+                              onBlur={(e) =>
+                                saveName(dayISO, time, e.currentTarget.value)
+                              }
                               className="block w-full text-white bg-[rgb(10,10,10)] border border-neutral-700/70 focus:border-white/70 focus:outline-none focus:ring-0 rounded-lg px-3 py-1.5 text-center transition-all duration-200"
                               style={{ fontFamily: BRAND.fontBody }}
                             />
@@ -839,9 +981,12 @@ export default function BarbershopAdminPanel() {
   if (!unlocked) {
     return (
       <div className="fixed inset-0 flex items-center justify-center bg-black text-white overflow-hidden">
+        {/* Ambient glow background */}
         <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(255,255,255,0.16)_0,_transparent_55%),radial-gradient(circle_at_bottom,_rgba(255,255,255,0.12)_0,_transparent_55%)]" />
 
+        {/* Card */}
         <div className="relative w-[min(100%-40px,420px)] rounded-[32px] border border-white/10 bg-[rgba(8,8,8,0.9)] backdrop-blur-xl px-7 py-8 shadow-[0_24px_80px_rgba(0,0,0,0.9)]">
+          {/* Small label */}
           <div className="mb-4 flex justify-center">
             <span
               className="inline-flex items-center justify-center rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[10px] uppercase tracking-[0.22em] text-neutral-300"
@@ -851,6 +996,7 @@ export default function BarbershopAdminPanel() {
             </span>
           </div>
 
+          {/* Logo wordmark */}
           <div className="mb-4 flex justify-center">
             <img
               src="/bush.png"
@@ -858,7 +1004,6 @@ export default function BarbershopAdminPanel() {
               className="max-h-16 w-auto object-contain"
             />
           </div>
-
           <p
             className="text-xs text-neutral-400 text-center mb-6"
             style={{ fontFamily: BRAND.fontBody }}
@@ -867,6 +1012,7 @@ export default function BarbershopAdminPanel() {
           </p>
 
           <form onSubmit={handleSubmit} className="space-y-4">
+            {/* Input wrapper */}
             <div className="rounded-2xl bg-neutral-900/80 border border-white/12 px-4 py-3 flex items-center focus-within:border-white/70 transition">
               <input
                 type="password"
