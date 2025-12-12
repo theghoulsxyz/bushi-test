@@ -30,6 +30,21 @@ function injectBrandFonts() {
   document.head.appendChild(link);
 }
 
+function injectBushiStyles() {
+  if (typeof document === 'undefined') return;
+  if (document.getElementById('bushi-styles')) return;
+
+  const style = document.createElement('style');
+  style.id = 'bushi-styles';
+  style.textContent = `
+    @keyframes bushiBarMove {
+      0% { background-position: 0 0; }
+      100% { background-position: 36px 0; }
+    }
+  `;
+  document.head.appendChild(style);
+}
+
 // =============================================================================
 // Helpers
 // =============================================================================
@@ -116,7 +131,7 @@ const isDayFull = (dayISO: string, store: Store) => {
   return true;
 };
 
-// Progress ratio for tiny bar (0..1)
+// Progress ratio for bar (0..1)
 const dayFillRatio = (dayISO: string, store: Store) => {
   const day = store[dayISO];
   if (!day) return 0;
@@ -191,7 +206,10 @@ function runDevChecks(viewYear: number, viewMonth: number) {
 // Main Calendar Component
 // =============================================================================
 function BarberCalendarCore() {
-  useEffect(() => injectBrandFonts(), []);
+  useEffect(() => {
+    injectBrandFonts();
+    injectBushiStyles();
+  }, []);
 
   const today = new Date();
   const todayISO = toISODate(today);
@@ -220,9 +238,7 @@ function BarberCalendarCore() {
     syncFromRemote();
 
     const handleVisibility = () => {
-      if (document.visibilityState === 'visible') {
-        syncFromRemote();
-      }
+      if (document.visibilityState === 'visible') syncFromRemote();
     };
 
     if (typeof document !== 'undefined') {
@@ -252,8 +268,7 @@ function BarberCalendarCore() {
 
   // Dev checks
   useEffect(() => {
-    if (process.env.NODE_ENV !== 'production')
-      runDevChecks(viewYear, viewMonth);
+    if (process.env.NODE_ENV !== 'production') runDevChecks(viewYear, viewMonth);
   }, [viewYear, viewMonth]);
 
   const [armedRemove, setArmedRemove] = useState<string | null>(null);
@@ -779,7 +794,7 @@ function BarberCalendarCore() {
 
               return (
                 <button key={key} onClick={() => openDay(d)} className={cls}>
-                  <div className="flex flex-col items-center justify-center gap-2">
+                  <div className="flex flex-col items-center justify-center gap-2 w-full">
                     <span
                       className={`select-none text-[clamp(17px,3.5vw,32px)] ${
                         isToday ? 'font-extrabold' : ''
@@ -789,18 +804,31 @@ function BarberCalendarCore() {
                       {inMonth && isFull ? 'X' : num}
                     </span>
 
-                    {/* ✅ Longer, more visible progress bar (only when ratio > 0) */}
+                    {/* ✅ Loading-bar style progress bar (more visible) */}
                     {showBar && (
                       <div
-                        className="w-[86%] max-w-[140px] h-[8px] rounded-full overflow-hidden border border-white/14 bg-white/6"
+                        className="w-[92%] max-w-[180px] h-[10px] rounded-full overflow-hidden border"
+                        style={{
+                          borderColor: 'rgba(255,255,255,0.16)',
+                          background:
+                            'linear-gradient(to bottom, rgba(255,255,255,0.08), rgba(255,255,255,0.03))',
+                          boxShadow:
+                            '0 1px 0 rgba(255,255,255,0.10) inset, 0 10px 22px rgba(0,0,0,0.55) inset',
+                        }}
                         aria-hidden="true"
                       >
                         <div
-                          className="h-full rounded-full bg-white/75"
+                          className="h-full rounded-full"
                           style={{
                             width: barFillWidth,
                             transition:
-                              'width 180ms cubic-bezier(0.25, 0.9, 0.25, 1)',
+                              'width 200ms cubic-bezier(0.25, 0.9, 0.25, 1)',
+                            backgroundImage:
+                              'repeating-linear-gradient(45deg, rgba(255,255,255,0.92) 0px, rgba(255,255,255,0.92) 10px, rgba(255,255,255,0.58) 10px, rgba(255,255,255,0.58) 20px)',
+                            backgroundSize: '36px 36px',
+                            animation: 'bushiBarMove 0.9s linear infinite',
+                            boxShadow:
+                              '0 0 0 1px rgba(255,255,255,0.10) inset, 0 0 18px rgba(255,255,255,0.18)',
                           }}
                         />
                       </div>
@@ -879,14 +907,12 @@ function BarberCalendarCore() {
               <div
                 className="flex items-center justify-between"
                 onMouseDown={(e) => {
-                  // ✅ mobile: tap header closes
                   if (!isTabletOrBigger()) {
                     e.stopPropagation();
                     animateCloseDown();
                   }
                 }}
                 onTouchStart={(e) => {
-                  // ✅ mobile: tap header closes
                   if (!isTabletOrBigger()) {
                     e.stopPropagation();
                     animateCloseDown();
