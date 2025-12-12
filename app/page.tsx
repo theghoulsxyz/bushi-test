@@ -275,7 +275,10 @@ function BarberCalendarCore() {
     setSelectedDate((prev) => {
       if (!prev) return prev;
       const next = addDays(prev, delta);
-      if (next.getFullYear() !== viewYear || next.getMonth() !== viewMonth) {
+      if (
+        next.getFullYear() !== viewYear ||
+        next.getMonth() !== viewMonth
+      ) {
         setViewYear(next.getFullYear());
         setViewMonth(next.getMonth());
       }
@@ -346,7 +349,9 @@ function BarberCalendarCore() {
 
     setSavedPulse({ day, time, ts: Date.now() });
     setTimeout(() => {
-      setSavedPulse((p) => (p && p.day === day && p.time === time ? null : p));
+      setSavedPulse((p) =>
+        p && p.day === day && p.time === time ? null : p,
+      );
     }, 900);
     setArmedRemove(null);
   };
@@ -435,7 +440,7 @@ function BarberCalendarCore() {
           <img
             src={BRAND.logoLight}
             alt="logo"
-            className="h-56 sm:h-64 md:h-[22rem] w-auto cursor-pointer shrink-0"
+            className="h-72 md:h-[22rem] w-auto cursor-pointer"
             onClick={() => {
               const now = new Date();
               setViewYear(now.getFullYear());
@@ -444,12 +449,8 @@ function BarberCalendarCore() {
           />
           <button
             onClick={() => setShowYear(true)}
-            className="flex-1 min-w-0 font-bold cursor-pointer hover:text-gray-300 select-none text-right whitespace-nowrap"
-            style={{
-              fontFamily: BRAND.fontTitle,
-              fontSize: 'clamp(28px, 5.2vw, 112px)',
-              lineHeight: 1,
-            }}
+            className="text-3xl sm:text-4xl md:text-7xl font-bold cursor-pointer hover:text-gray-300 select-none text-right flex-1"
+            style={{ fontFamily: BRAND.fontTitle }}
             title="Open year view"
           >
             {monthLabel}
@@ -492,7 +493,11 @@ function BarberCalendarCore() {
                   : 'border-neutral-700 hover:border-white/60',
             ].join(' ');
             return (
-              <button key={key} onClick={() => openDay(d)} className={cls}>
+              <button
+                key={key}
+                onClick={() => openDay(d)}
+                className={cls}
+              >
                 <span
                   className={`select-none text-[clamp(17px,3.5vw,32px)] ${
                     isToday ? 'font-extrabold' : ''
@@ -593,7 +598,8 @@ function BarberCalendarCore() {
                   style={{ fontFamily: BRAND.fontTitle }}
                 >
                   {WEEKDAYS_FULL[(selectedDate.getDay() + 6) % 7]}{' '}
-                  {selectedDate.getDate()} {MONTHS[selectedDate.getMonth()]}{' '}
+                  {selectedDate.getDate()}{' '}
+                  {MONTHS[selectedDate.getMonth()]}{' '}
                   {selectedDate.getFullYear()}
                 </h3>
                 <button
