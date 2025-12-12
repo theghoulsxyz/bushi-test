@@ -272,6 +272,12 @@ function BarberCalendarCore() {
   const swipeDY = useRef<number>(0);
   const [swipeStyle, setSwipeStyle] = useState<React.CSSProperties>({});
   const SWIPE_THRESHOLD = 48; // px
+  const VERTICAL_CLOSE_THRESHOLD = 90; // px (tablet: swipe down to close)
+  const isTabletOrBigger = () =>
+    typeof window !== 'undefined' &&
+    (window.matchMedia
+      ? window.matchMedia('(min-width: 768px)').matches
+      : window.innerWidth >= 768);
 
   const shiftSelectedDay = (delta: number) => {
     setSelectedDate((prev) => {
@@ -416,11 +422,26 @@ function BarberCalendarCore() {
 
   const onTouchEnd = () => {
     if (swipeStartX.current == null) return;
+
     const dx = swipeDX.current;
+    const dy = swipeDY.current;
+
     swipeStartX.current = null;
     swipeStartY.current = null;
     swipeDX.current = 0;
     swipeDY.current = 0;
+
+    // Tablet gesture: swipe down to close the day editor
+    if (
+      isTabletOrBigger() &&
+      dy >= VERTICAL_CLOSE_THRESHOLD &&
+      Math.abs(dy) > Math.abs(dx) * 1.2
+    ) {
+      setSelectedDate(null);
+      setSwipeStyle({});
+      return;
+    }
+
     if (Math.abs(dx) >= SWIPE_THRESHOLD) {
       animateShift(dx > 0 ? -1 : 1);
     } else {
@@ -466,7 +487,7 @@ function BarberCalendarCore() {
           {WEEKDAYS_SHORT.map((d) => (
             <div
               key={d}
-              className="text-center font-bold text-gray-300 text-[clamp(14px,2.8vw,22px)]"
+              className="text-center font-extrabold text-gray-200 text-[clamp(14px,2.8vw,22px)]"
             >
               {d}
             </div>
