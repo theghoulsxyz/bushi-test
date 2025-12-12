@@ -39,6 +39,14 @@ const toISODate = (d: Date) =>
 const addDays = (d: Date, delta: number) =>
   new Date(d.getFullYear(), d.getMonth(), d.getDate() + delta);
 
+// iOS-like rubber banding (resistance) for drag gestures
+function rubberBand(distance: number, dimension: number, constant = 0.55) {
+  const abs = Math.abs(distance);
+  const sign = distance < 0 ? -1 : 1;
+  const result = (abs * dimension * constant) / (dimension + constant * abs);
+  return sign * result;
+}
+
 function monthMatrix(year: number, month: number) {
   const first = new Date(year, month, 1);
   const startDay = (first.getDay() + 6) % 7; // Monday = 0
@@ -56,9 +64,6 @@ function monthMatrix(year: number, month: number) {
 // =============================================================================
 // Weekdays / Months (Bulgarian)
 // =============================================================================
-
-// Bulgarian weekdays
-// Monday = 0 (using (getDay()+6)%7 remap)
 const WEEKDAYS_SHORT = ['Пон', 'Вто', 'Сря', 'Чет', 'Пет', 'Съб', 'Нед'];
 
 const WEEKDAYS_FULL = [
@@ -71,7 +76,6 @@ const WEEKDAYS_FULL = [
   'Неделя',
 ];
 
-// Bulgarian months (Capitalized)
 const MONTHS = [
   'Януари',
   'Февруари',
@@ -145,7 +149,7 @@ async function pushRemoteStore(data: Store): Promise<void> {
       body: JSON.stringify(data),
     });
   } catch {
-    // fail silently; Supabase is the only source, but network errors will just not sync
+    // fail silently
   }
 }
 
@@ -191,27 +195,6 @@ function BarberCalendarCore() {
   const [showYear, setShowYear] = useState(false);
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
 
-  // Digital clock (top right under month title) — HH:MM (no seconds)
-  const [nowTick, setNowTick] = useState<Date>(() => new Date());
-  useEffect(() => {
-    const t = setInterval(() => setNowTick(new Date()), 1000);
-    return () => clearInterval(t);
-  }, []);
-
-  const clockLabel = useMemo(() => {
-    try {
-      // Bulgarian locale, 24h, HH:MM
-      return nowTick.toLocaleTimeString('bg-BG', {
-        hour: '2-digit',
-        minute: '2-digit',
-        hour12: false,
-      });
-    } catch {
-      // fallback
-      return `${pad(nowTick.getHours())}:${pad(nowTick.getMinutes())}`;
-    }
-  }, [nowTick]);
-
   // === APPOINTMENT STORE — Supabase ONLY, no localStorage ===
   const [store, setStore] = useState<Store>({});
   const lastLocalChangeRef = useRef<number | null>(null);
@@ -226,7 +209,6 @@ function BarberCalendarCore() {
     try {
       const remote = await fetchRemoteStore();
       if (!remote || remoteCancelledRef.current) return;
-      // Remote is source of truth
       setStore(remote);
     } finally {
       remoteSyncInFlightRef.current = false;
@@ -237,10 +219,8 @@ function BarberCalendarCore() {
   useEffect(() => {
     remoteCancelledRef.current = false;
 
-    // 1) Initial load
     syncFromRemote();
 
-    // 2) Every time the document becomes visible again
     const handleVisibility = () => {
       if (document.visibilityState === 'visible') {
         syncFromRemote();
@@ -251,8 +231,7 @@ function BarberCalendarCore() {
       document.addEventListener('visibilitychange', handleVisibility);
     }
 
-    // 3) Periodic sync (approx. realtime between devices)
-    const interval = setInterval(syncFromRemote, 4000); // every 4 seconds
+    const interval = setInterval(syncFromRemote, 4000);
 
     return () => {
       remoteCancelledRef.current = true;
@@ -286,20 +265,35 @@ function BarberCalendarCore() {
     ts: number;
   } | null>(null);
 
-  // swipe state for smooth left/right day navigation on touch devices
+  // gesture state
   const swipeStartX = useRef<number | null>(null);
   const swipeStartY = useRef<number | null>(null);
   const swipeDX = useRef<number>(0);
   const swipeDY = useRef<number>(0);
+
+  // Horizontal day sliding style (applied to content)
   const [swipeStyle, setSwipeStyle] = useState<React.CSSProperties>({});
+  // Vertical close animation style (applied to the whole panel)
+  const [panelStyle, setPanelStyle] = useState<React.CSSProperties>({});
+  const gestureModeRef = useRef<'none' | 'horizontal' | 'vertical'>('none');
+
   const SWIPE_THRESHOLD = 48; // px
-  const VERTICAL_CLOSE_THRESHOLD = 90; // px (tablet: swipe down to close)
+  const VERTICAL_CLOSE_THRESHOLD = 90; // px
+
+  const IOS_EASE = 'cubic-bezier(0.22, 1, 0.36, 1)';
 
   const isTabletOrBigger = () =>
     typeof window !== 'undefined' &&
     (window.matchMedia
       ? window.matchMedia('(min-width: 768px)').matches
       : window.innerWidth >= 768);
+
+  // Reset styles when opening/changing day
+  useEffect(() => {
+    setSwipeStyle({});
+    setPanelStyle({});
+    gestureModeRef.current = 'none';
+  }, [selectedDate]);
 
   const shiftSelectedDay = (delta: number) => {
     setSelectedDate((prev) => {
@@ -315,25 +309,39 @@ function BarberCalendarCore() {
 
   const animateShift = (delta: number) => {
     setSwipeStyle({
-      transform: `translateX(${delta > 0 ? -24 : 24}px)`,
-      opacity: 0.3,
-      transition: 'transform 160ms ease, opacity 160ms ease',
+      transform: `translateX(${delta > 0 ? -26 : 26}px)`,
+      opacity: 0.35,
+      transition: `transform 200ms ${IOS_EASE}, opacity 200ms ${IOS_EASE}`,
     });
     setTimeout(() => {
       shiftSelectedDay(delta);
       setSwipeStyle({
-        transform: `translateX(${delta > 0 ? 24 : -24}px)`,
-        opacity: 0.3,
+        transform: `translateX(${delta > 0 ? 26 : -26}px)`,
+        opacity: 0.35,
         transition: 'none',
       });
       requestAnimationFrame(() => {
         setSwipeStyle({
           transform: 'translateX(0)',
           opacity: 1,
-          transition: 'transform 160ms ease, opacity 160ms ease',
+          transition: `transform 220ms ${IOS_EASE}, opacity 220ms ${IOS_EASE}`,
         });
       });
-    }, 160);
+    }, 200);
+  };
+
+  const animateCloseDown = () => {
+    setPanelStyle({
+      transform: 'translateY(220px) scale(0.995)',
+      opacity: 0,
+      transition: `transform 240ms ${IOS_EASE}, opacity 200ms ${IOS_EASE}`,
+    });
+    setTimeout(() => {
+      setSelectedDate(null);
+      setPanelStyle({});
+      setSwipeStyle({});
+      gestureModeRef.current = 'none';
+    }, 240);
   };
 
   const matrix = useMemo(
@@ -424,21 +432,57 @@ function BarberCalendarCore() {
     return () => window.removeEventListener('keydown', onKey);
   }, [selectedDate]);
 
-  // touch handlers for swipe inside day editor (ignore vertical drags)
+  // touch handlers: iOS-like rubberband + spring
   const onTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
     swipeStartX.current = e.touches[0].clientX;
     swipeStartY.current = e.touches[0].clientY;
     swipeDX.current = 0;
     swipeDY.current = 0;
+    gestureModeRef.current = 'none';
     setSwipeStyle({ transition: 'none' });
+    setPanelStyle({ transition: 'none', transform: 'translateY(0)', opacity: 1 });
   };
 
   const onTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
     if (swipeStartX.current == null || swipeStartY.current == null) return;
-    swipeDX.current = e.touches[0].clientX - swipeStartX.current;
-    swipeDY.current = e.touches[0].clientY - swipeStartY.current;
-    if (Math.abs(swipeDX.current) > Math.abs(swipeDY.current)) {
-      setSwipeStyle({ transform: `translateX(${swipeDX.current}px)` });
+
+    const dxRaw = e.touches[0].clientX - swipeStartX.current;
+    const dyRaw = e.touches[0].clientY - swipeStartY.current;
+
+    swipeDX.current = dxRaw;
+    swipeDY.current = dyRaw;
+
+    const absX = Math.abs(dxRaw);
+    const absY = Math.abs(dyRaw);
+
+    // decide gesture mode once
+    if (gestureModeRef.current === 'none') {
+      if (isTabletOrBigger() && dyRaw > 0 && absY > absX * 1.15) {
+        gestureModeRef.current = 'vertical';
+      } else if (absX > absY) {
+        gestureModeRef.current = 'horizontal';
+      }
+    }
+
+    if (gestureModeRef.current === 'vertical') {
+      // rubberband down + slight scale + fade (iOS-like)
+      const dy = rubberBand(Math.max(dyRaw, 0), 360, 0.62);
+      const opacity = Math.max(0.25, 1 - dy / 420);
+      const scale = 1 - Math.min(0.01, dy / 26000); // tiny shrink
+      setPanelStyle({
+        transform: `translateY(${dy}px) scale(${scale})`,
+        opacity,
+        transition: 'none',
+      });
+      setSwipeStyle({ transform: 'translateX(0)', transition: 'none' });
+      return;
+    }
+
+    if (gestureModeRef.current === 'horizontal') {
+      // rubberband both directions (but normal near center)
+      const dx = rubberBand(dxRaw, 420, 0.6);
+      setSwipeStyle({ transform: `translateX(${dx}px)`, transition: 'none' });
+      return;
     }
   };
 
@@ -453,25 +497,46 @@ function BarberCalendarCore() {
     swipeDX.current = 0;
     swipeDY.current = 0;
 
-    // Tablet gesture: swipe down to close the day editor
-    if (
-      isTabletOrBigger() &&
-      dy >= VERTICAL_CLOSE_THRESHOLD &&
-      Math.abs(dy) > Math.abs(dx) * 1.2
-    ) {
-      setSelectedDate(null);
-      setSwipeStyle({});
+    if (gestureModeRef.current === 'vertical') {
+      if (isTabletOrBigger() && dy >= VERTICAL_CLOSE_THRESHOLD) {
+        animateCloseDown();
+      } else {
+        // spring back (iOS-ish)
+        setPanelStyle({
+          transform: 'translateY(0) scale(1)',
+          opacity: 1,
+          transition: `transform 260ms ${IOS_EASE}, opacity 220ms ${IOS_EASE}`,
+        });
+        setTimeout(() => setPanelStyle({}), 260);
+      }
+      gestureModeRef.current = 'none';
       return;
     }
 
-    if (Math.abs(dx) >= SWIPE_THRESHOLD) {
-      animateShift(dx > 0 ? -1 : 1);
-    } else {
-      setSwipeStyle({
-        transform: 'translateX(0)',
-        transition: 'transform 160ms ease',
-      });
+    if (gestureModeRef.current === 'horizontal') {
+      if (Math.abs(dx) >= SWIPE_THRESHOLD) {
+        animateShift(dx > 0 ? -1 : 1);
+      } else {
+        setSwipeStyle({
+          transform: 'translateX(0)',
+          transition: `transform 260ms ${IOS_EASE}`,
+        });
+      }
+      gestureModeRef.current = 'none';
+      return;
     }
+
+    // no gesture: reset
+    setSwipeStyle({
+      transform: 'translateX(0)',
+      transition: `transform 220ms ${IOS_EASE}`,
+    });
+    setPanelStyle({
+      transform: 'translateY(0) scale(1)',
+      opacity: 1,
+      transition: `transform 220ms ${IOS_EASE}, opacity 220ms ${IOS_EASE}`,
+    });
+    setTimeout(() => setPanelStyle({}), 220);
   };
 
   return (
@@ -487,31 +552,18 @@ function BarberCalendarCore() {
               const now = new Date();
               setViewYear(now.getFullYear());
               setViewMonth(now.getMonth());
-              // Manual force refresh from Supabase (if first load was empty)
               syncFromRemote();
             }}
           />
 
-          {/* Right side: Month title + digital clock under it */}
-          <div className="flex-1 min-w-0 flex flex-col items-end text-right">
-            <button
-              onClick={() => setShowYear(true)}
-              className="text-3xl sm:text-4xl md:text-7xl font-bold cursor-pointer hover:text-gray-300 select-none"
-              style={{ fontFamily: BRAND.fontTitle }}
-              title="Open year view"
-            >
-              {monthLabel}
-            </button>
-
-            <div
-              className="mt-2 text-gray-300/90 font-semibold tracking-[0.22em] tabular-nums text-[clamp(12px,1.6vw,18px)]"
-              style={{ fontFamily: BRAND.fontBody }}
-              aria-label="Current time"
-              title="Local time"
-            >
-              {clockLabel}
-            </div>
-          </div>
+          <button
+            onClick={() => setShowYear(true)}
+            className="text-3xl sm:text-4xl md:text-7xl font-bold cursor-pointer hover:text-gray-300 select-none text-right flex-1"
+            style={{ fontFamily: BRAND.fontTitle }}
+            title="Open year view"
+          >
+            {monthLabel}
+          </button>
         </div>
 
         {/* Weekday labels */}
@@ -641,6 +693,7 @@ function BarberCalendarCore() {
         >
           <div
             className="max-w-6xl w-[94vw] md:w-[1100px] h-[90vh] rounded-2xl border border-neutral-700 bg-[rgb(10,10,10)] p-4 md:p-6 shadow-2xl overflow-hidden"
+            style={panelStyle}
             onMouseDown={(e) => e.stopPropagation()}
             onTouchStart={(e) => e.stopPropagation()}
           >
@@ -663,7 +716,7 @@ function BarberCalendarCore() {
                 </button>
               </div>
 
-              {/* Content area: scrollable on phone, fixed on tablet/desktop */}
+              {/* Content area */}
               <div
                 className="mt-4 flex-1 overflow-y-auto md:overflow-visible"
                 onTouchStart={onTouchStart}
