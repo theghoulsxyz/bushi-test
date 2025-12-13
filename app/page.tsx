@@ -694,6 +694,13 @@ function BarberCalendarCore() {
     setSelectedDate(d);
   };
 
+  const goTodayOpen = () => {
+    const now = new Date();
+    setViewYear(now.getFullYear());
+    setViewMonth(now.getMonth());
+    openDay(now);
+  };
+
   // =============================================================================
   // Year modal gestures (1:1 drag)
   // =============================================================================
@@ -723,7 +730,7 @@ function BarberCalendarCore() {
     setYearStyle({
       transform: `translateX(${deltaYear > 0 ? -22 : 22}px)`,
       opacity: 0.55,
-      transition: `transform 140ms cubic-bezier(0.25, 0.9, 0.25, 1), opacity 140ms cubic-bezier(0.25, 0.9, 0.25, 1)`,
+      transition: `transform 140ms ${SNAP_EASE}, opacity 140ms ${SNAP_EASE}`,
     });
     setTimeout(() => {
       setViewYear((y) => y + deltaYear);
@@ -736,7 +743,7 @@ function BarberCalendarCore() {
         setYearStyle({
           transform: 'translateX(0)',
           opacity: 1,
-          transition: `transform 160ms cubic-bezier(0.25, 0.9, 0.25, 1), opacity 160ms cubic-bezier(0.25, 0.9, 0.25, 1)`,
+          transition: `transform 160ms ${SNAP_EASE}, opacity 160ms ${SNAP_EASE}`,
         });
       });
     }, 140);
@@ -746,7 +753,7 @@ function BarberCalendarCore() {
     setYearStyle({
       transform: 'translateY(160px)',
       opacity: 0,
-      transition: `transform 170ms cubic-bezier(0.25, 0.9, 0.25, 1), opacity 150ms cubic-bezier(0.25, 0.9, 0.25, 1)`,
+      transition: `transform 170ms ${SNAP_EASE}, opacity 150ms ${SNAP_EASE}`,
     });
     setTimeout(() => {
       setShowYear(false);
@@ -816,7 +823,7 @@ function BarberCalendarCore() {
         setYearStyle({
           transform: 'translateY(0)',
           opacity: 1,
-          transition: `transform 160ms cubic-bezier(0.25, 0.9, 0.25, 1), opacity 140ms cubic-bezier(0.25, 0.9, 0.25, 1)`,
+          transition: `transform 160ms ${SNAP_EASE}, opacity 140ms ${SNAP_EASE}`,
         });
         setTimeout(() => setYearStyle({}), 160);
       }
@@ -830,7 +837,7 @@ function BarberCalendarCore() {
       } else {
         setYearStyle({
           transform: 'translateX(0)',
-          transition: `transform 170ms cubic-bezier(0.25, 0.9, 0.25, 1)`,
+          transition: `transform 170ms ${SNAP_EASE}`,
         });
       }
       yearModeRef.current = 'none';
@@ -839,7 +846,7 @@ function BarberCalendarCore() {
 
     setYearStyle({
       transform: 'translateX(0)',
-      transition: `transform 160ms cubic-bezier(0.25, 0.9, 0.25, 1)`,
+      transition: `transform 160ms ${SNAP_EASE}`,
     });
     yearModeRef.current = 'none';
   };
@@ -896,6 +903,9 @@ function BarberCalendarCore() {
     setHighlight({ day: dayISOKey, time, ts: Date.now() });
   };
 
+  const weekendBtnClass =
+    'w-10 h-10 md:w-11 md:h-11 rounded-2xl border border-neutral-700/70 bg-neutral-900/65 hover:bg-neutral-800/75 transition grid place-items-center shadow-[0_14px_40px_rgba(0,0,0,0.75)]';
+
   return (
     <div className="fixed inset-0 w-full h-dvh bg-black text-white overflow-hidden">
       <div className="max-w-screen-2xl mx-auto px-[clamp(12px,2.5vw,40px)] pt-[clamp(12px,2.5vw,40px)] pb-[clamp(8px,2vw,24px)] h-full flex flex-col select-none">
@@ -925,27 +935,38 @@ function BarberCalendarCore() {
           </button>
         </div>
 
-        {/* Weekday labels (bolder) + Search over "Нед" */}
+        {/* Weekday labels (bolder) + buttons over weekend WITHOUT overlap */}
         <div
           className="mt-[clamp(12px,2.8vw,28px)] grid grid-cols-7 gap-[clamp(6px,1.2vw,16px)] text-center"
           style={{ fontFamily: BRAND.fontTitle }}
         >
           {WEEKDAYS_SHORT.map((d, idx) => {
-            const isSunday = idx === 6;
+            const isSat = idx === 5;
+            const isSun = idx === 6;
 
             return (
-              <div key={d} className="relative">
-                {/* Search button floating above "Нед" */}
-                {isSunday && (
+              <div key={d} className="flex flex-col items-center gap-2">
+                {/* reserved top area so nothing overlaps text */}
+                {isSat ? (
+                  <button
+                    onClick={goTodayOpen}
+                    className={weekendBtnClass}
+                    aria-label="Today"
+                    title="Open today"
+                  >
+                    <span className="text-[18px] md:text-[20px] leading-none">◎</span>
+                  </button>
+                ) : isSun ? (
                   <button
                     onClick={() => setShowSearch(true)}
-                    className="absolute left-1/2 -translate-x-1/2 -top-7 md:-top-8 w-10 h-10 md:w-11 md:h-11 rounded-2xl border border-neutral-700/70 bg-neutral-900/65 hover:bg-neutral-800/75 transition grid place-items-center shadow-[0_14px_40px_rgba(0,0,0,0.75)]"
+                    className={weekendBtnClass}
                     aria-label="Search"
                     title="Search (Ctrl+K)"
-                    style={{ zIndex: 5 }}
                   >
                     <span className="text-xl md:text-2xl leading-none">⌕</span>
                   </button>
+                ) : (
+                  <div className="h-10 md:h-11" aria-hidden="true" />
                 )}
 
                 <div className="text-center font-extrabold text-gray-200 text-[clamp(14px,2.8vw,22px)]">
