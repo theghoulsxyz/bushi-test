@@ -314,7 +314,7 @@ function BarberCalendarCore() {
   const [searchQ, setSearchQ] = useState('');
   const searchInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Slot highlight when jumping from search
+  // Slot highlight when jumping from search / earliest
   const [highlight, setHighlight] = useState<{
     day: string;
     time: string;
@@ -694,12 +694,57 @@ function BarberCalendarCore() {
     setSelectedDate(d);
   };
 
-  const goTodayOpen = () => {
-    const now = new Date();
-    setViewYear(now.getFullYear());
-    setViewMonth(now.getMonth());
-    openDay(now);
+  // =============================================================================
+  // Earliest available slot (today -> future)
+  // =============================================================================
+  const earliestAvail = useMemo(() => {
+    const start = new Date(`${todayISO}T00:00:00`);
+    const MAX_DAYS = 366; // 1 year forward
+    let cur = start;
+
+    for (let i = 0; i < MAX_DAYS; i++) {
+      const dayISO = toISODate(cur);
+      const dayMap = store[dayISO] || {};
+
+      for (const slot of DAY_SLOTS) {
+        const v = (dayMap as Record<string, string>)[slot];
+        if (!v || v.trim().length === 0) {
+          return { dayISO, time: slot };
+        }
+      }
+
+      cur = addDays(cur, 1);
+    }
+
+    return null as null | { dayISO: string; time: string };
+  }, [store, todayISO]);
+
+  const earliestLabel = useMemo(() => {
+    if (!earliestAvail) return null;
+    const d = new Date(`${earliestAvail.dayISO}T00:00:00`);
+    const dd = pad(d.getDate());
+    const mm = pad(d.getMonth() + 1);
+    return { time: earliestAvail.time, ddmm: `${dd}.${mm}` };
+  }, [earliestAvail]);
+
+  const openEarliestAvail = () => {
+    if (!earliestAvail) return;
+    const d = new Date(`${earliestAvail.dayISO}T00:00:00`);
+    setViewYear(d.getFullYear());
+    setViewMonth(d.getMonth());
+    openDay(d);
+    setHighlight({ day: earliestAvail.dayISO, time: earliestAvail.time, ts: Date.now() });
   };
+
+  const earliestTitle = useMemo(() => {
+    if (!earliestAvail) return 'Няма свободни часове (1 година напред)';
+    const d = new Date(`${earliestAvail.dayISO}T00:00:00`);
+    const weekday = WEEKDAYS_FULL[(d.getDay() + 6) % 7];
+    const day = d.getDate();
+    const month = MONTHS[d.getMonth()];
+    const year = d.getFullYear();
+    return `Най-ранен свободен час: ${weekday} ${day} ${month} ${year} • ${earliestAvail.time}`;
+  }, [earliestAvail]);
 
   // =============================================================================
   // Year modal gestures (1:1 drag)
@@ -904,7 +949,7 @@ function BarberCalendarCore() {
   };
 
   const weekendBtnClass =
-    'w-10 h-10 md:w-11 md:h-11 rounded-2xl border border-neutral-700/70 bg-neutral-900/65 hover:bg-neutral-800/75 transition grid place-items-center shadow-[0_14px_40px_rgba(0,0,0,0.75)]';
+    'w-14 md:w-16 h-10 md:h-11 rounded-2xl border border-neutral-700/70 bg-neutral-900/65 hover:bg-neutral-800/75 transition grid place-items-center shadow-[0_14px_40px_rgba(0,0,0,0.75)]';
 
   return (
     <div className="fixed inset-0 w-full h-dvh bg-black text-white overflow-hidden">
@@ -949,19 +994,34 @@ function BarberCalendarCore() {
                 {/* reserved top area so nothing overlaps text */}
                 {isSat ? (
                   <button
-                    onClick={goTodayOpen}
-                    className={weekendBtnClass}
-                    aria-label="Today"
-                    title="Open today"
+                    onClick={openEarliestAvail}
+                    className={`${weekendBtnClass} ${!earliestAvail ? 'opacity-50 cursor-not-allowed hover:bg-neutral-900/65' : ''}`}
+                    aria-label="Най-ранен свободен час"
+                    title={earliestTitle}
+                    disabled={!earliestAvail}
                   >
-                    <span className="text-[18px] md:text-[20px] leading-none">◎</span>
+                    {earliestLabel ? (
+                      <div
+                        className="flex flex-col items-center leading-none"
+                        style={{ fontFamily: BRAND.fontBody }}
+                      >
+                        <span className="text-[13px] md:text-[14px] font-semibold tabular-nums">
+                          {earliestLabel.time}
+                        </span>
+                        <span className="text-[10px] md:text-[11px] text-neutral-300 tabular-nums">
+                          {earliestLabel.ddmm}
+                        </span>
+                      </div>
+                    ) : (
+                      <span className="text-[18px] md:text-[20px] leading-none">–</span>
+                    )}
                   </button>
                 ) : isSun ? (
                   <button
                     onClick={() => setShowSearch(true)}
                     className={weekendBtnClass}
-                    aria-label="Search"
-                    title="Search (Ctrl+K)"
+                    aria-label="Търсене"
+                    title="Търсене"
                   >
                     <span className="text-xl md:text-2xl leading-none">⌕</span>
                   </button>
@@ -1068,10 +1128,7 @@ function BarberCalendarCore() {
                 className="text-[clamp(22px,4.2vw,32px)] leading-none select-none"
                 style={{ fontFamily: BRAND.fontTitle }}
               >
-                Search client
-              </div>
-              <div className="text-[11px] text-neutral-500" style={{ fontFamily: BRAND.fontBody }}>
-                Ctrl+K • / • Esc
+                Търсене на клиент
               </div>
             </div>
 
@@ -1080,7 +1137,7 @@ function BarberCalendarCore() {
                 ref={searchInputRef}
                 value={searchQ}
                 onChange={(e) => setSearchQ(e.target.value)}
-                placeholder="Type a name…"
+                placeholder="Въведи име…"
                 className="w-full rounded-2xl bg-neutral-900/70 border border-neutral-700/70 focus:border-white/70 outline-none px-4 py-3 text-base"
                 style={{ fontFamily: BRAND.fontBody }}
               />
@@ -1089,11 +1146,11 @@ function BarberCalendarCore() {
             <div className="mt-4 max-h-[58vh] overflow-y-auto pr-1">
               {searchQ.trim().length === 0 ? (
                 <div className="text-neutral-400 text-sm" style={{ fontFamily: BRAND.fontBody }}>
-                  Start typing to search.
+                  Започни да пишеш, за да търсиш.
                 </div>
               ) : hits.length === 0 ? (
                 <div className="text-neutral-400 text-sm" style={{ fontFamily: BRAND.fontBody }}>
-                  No results.
+                  Няма резултати.
                 </div>
               ) : (
                 <div className="space-y-3">
