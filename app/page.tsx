@@ -1,5 +1,5 @@
 'use client';
-// Bushi Admin — Month grid + Day editor + Year view + Search (Supabase sync)
+// Bushi Admin — Month grid + Day editor + Year view + Search + Next available list (Supabase sync)
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
@@ -83,6 +83,10 @@ function isTypingTarget(el: Element | null) {
   const ce = (el as HTMLElement).getAttribute?.('contenteditable');
   return ce === '' || ce === 'true';
 }
+
+// Safe DOM id for slot input
+const slotInputId = (dayISO: string, time: string) =>
+  `slot_${dayISO.replace(/[^0-9]/g, '')}_${time.replace(/[^0-9]/g, '')}`;
 
 // =============================================================================
 // Weekdays / Months (Bulgarian)
@@ -214,6 +218,7 @@ const SlotRow = React.memo(
   }: SlotRowProps) {
     const hasName = (value || '').trim().length > 0;
     const timeKey = `${dayISO}_${time}`;
+    const inputId = slotInputId(dayISO, time);
 
     return (
       <div
@@ -237,6 +242,7 @@ const SlotRow = React.memo(
 
         <div className="flex-1 min-w-0 flex items-center gap-2">
           <input
+            id={inputId}
             key={timeKey + value} // refresh defaultValue when remote sync changes
             defaultValue={value}
             onKeyDown={(e) => {
@@ -314,8 +320,18 @@ function BarberCalendarCore() {
   const [searchQ, setSearchQ] = useState('');
   const searchInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Slot highlight when jumping from search / earliest
+  // Availability modal (closest free slots)
+  const [showAvail, setShowAvail] = useState(false);
+
+  // Slot highlight when jumping from search / availability
   const [highlight, setHighlight] = useState<{
+    day: string;
+    time: string;
+    ts: number;
+  } | null>(null);
+
+  // Pending autofocus for a specific slot
+  const [pendingFocus, setPendingFocus] = useState<{
     day: string;
     time: string;
     ts: number;
@@ -355,11 +371,13 @@ function BarberCalendarCore() {
   useEffect(() => {
     if (typeof document === 'undefined') return;
     const prev = document.body.style.overflow;
-    if (showYear || selectedDate || showSearch) document.body.style.overflow = 'hidden';
+    if (showYear || selectedDate || showSearch || showAvail) {
+      document.body.style.overflow = 'hidden';
+    }
     return () => {
       document.body.style.overflow = prev;
     };
-  }, [showYear, selectedDate, showSearch]);
+  }, [showYear, selectedDate, showSearch, showAvail]);
 
   // Autofocus search input
   useEffect(() => {
@@ -371,12 +389,13 @@ function BarberCalendarCore() {
     return () => window.clearTimeout(t);
   }, [showSearch]);
 
-  // Shortcuts: Ctrl+K or / to open search, Esc closes
+  // Shortcuts: Ctrl+K or / to open search, Esc closes (search/year/avail)
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         if (showSearch) setShowSearch(false);
         if (showYear) setShowYear(false);
+        if (showAvail) setShowAvail(false);
         return;
       }
 
@@ -393,7 +412,7 @@ function BarberCalendarCore() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [showSearch, showYear]);
+  }, [showSearch, showYear, showAvail]);
 
   // Remove confirmation state
   const [armedRemove, setArmedRemove] = useState<string | null>(null);
@@ -506,6 +525,7 @@ function BarberCalendarCore() {
       setPanelStyle({});
       setSwipeStyle({});
       gestureModeRef.current = 'none';
+      setPendingFocus(null);
     }, 170);
   };
 
@@ -683,6 +703,29 @@ function BarberCalendarCore() {
     return () => window.clearTimeout(t);
   }, [highlight]);
 
+  // Auto focus slot input when requested
+  useEffect(() => {
+    if (!pendingFocus || !selectedDayISO) return;
+    if (pendingFocus.day !== selectedDayISO) return;
+
+    const id = slotInputId(pendingFocus.day, pendingFocus.time);
+    const t = window.setTimeout(() => {
+      const el = document.getElementById(id) as HTMLInputElement | null;
+      if (el) {
+        try {
+          el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        } catch {
+          // ignore
+        }
+        el.focus();
+        el.select();
+      }
+      setPendingFocus(null);
+    }, 120);
+
+    return () => window.clearTimeout(t);
+  }, [pendingFocus, selectedDayISO]);
+
   // Month matrix
   const matrix = useMemo(() => monthMatrix(viewYear, viewMonth), [viewYear, viewMonth]);
 
@@ -695,56 +738,62 @@ function BarberCalendarCore() {
   };
 
   // =============================================================================
-  // Earliest available slot (today -> future)
+  // Closest available list (today -> future)
   // =============================================================================
-  const earliestAvail = useMemo(() => {
-    const start = new Date(`${todayISO}T00:00:00`);
-    const MAX_DAYS = 366; // 1 year forward
-    let cur = start;
+  type AvailHit = { dayISO: string; time: string };
 
-    for (let i = 0; i < MAX_DAYS; i++) {
+  const closestAvail: AvailHit[] = useMemo(() => {
+    const COUNT = 18; // how many items in the modal
+    const MAX_DAYS = 120; // scan forward up to 4 months
+    const out: AvailHit[] = [];
+
+    let cur = new Date(`${todayISO}T00:00:00`);
+    for (let i = 0; i < MAX_DAYS && out.length < COUNT; i++) {
       const dayISO = toISODate(cur);
       const dayMap = store[dayISO] || {};
 
       for (const slot of DAY_SLOTS) {
         const v = (dayMap as Record<string, string>)[slot];
         if (!v || v.trim().length === 0) {
-          return { dayISO, time: slot };
+          out.push({ dayISO, time: slot });
+          if (out.length >= COUNT) break;
         }
       }
 
       cur = addDays(cur, 1);
     }
 
-    return null as null | { dayISO: string; time: string };
+    return out;
   }, [store, todayISO]);
 
-  const earliestLabel = useMemo(() => {
-    if (!earliestAvail) return null;
-    const d = new Date(`${earliestAvail.dayISO}T00:00:00`);
-    const dd = pad(d.getDate());
-    const mm = pad(d.getMonth() + 1);
-    return { time: earliestAvail.time, ddmm: `${dd}.${mm}` };
-  }, [earliestAvail]);
+  const closestGrouped = useMemo(() => {
+    const m = new Map<string, AvailHit[]>();
+    for (const h of closestAvail) {
+      if (!m.has(h.dayISO)) m.set(h.dayISO, []);
+      m.get(h.dayISO)!.push(h);
+    }
+    return Array.from(m.entries()).map(([dayISO, list]) => ({ dayISO, list }));
+  }, [closestAvail]);
 
-  const openEarliestAvail = () => {
-    if (!earliestAvail) return;
-    const d = new Date(`${earliestAvail.dayISO}T00:00:00`);
-    setViewYear(d.getFullYear());
-    setViewMonth(d.getMonth());
-    openDay(d);
-    setHighlight({ day: earliestAvail.dayISO, time: earliestAvail.time, ts: Date.now() });
-  };
-
-  const earliestTitle = useMemo(() => {
-    if (!earliestAvail) return 'Няма свободни часове (1 година напред)';
-    const d = new Date(`${earliestAvail.dayISO}T00:00:00`);
+  const formatDayLabel = (dayISOKey: string) => {
+    const d = new Date(`${dayISOKey}T00:00:00`);
     const weekday = WEEKDAYS_FULL[(d.getDay() + 6) % 7];
     const day = d.getDate();
     const month = MONTHS[d.getMonth()];
     const year = d.getFullYear();
-    return `Най-ранен свободен час: ${weekday} ${day} ${month} ${year} • ${earliestAvail.time}`;
-  }, [earliestAvail]);
+    return `${weekday} ${day} ${month} ${year}`;
+  };
+
+  const openFromAvailability = (dayISOKey: string, time: string) => {
+    const d = new Date(`${dayISOKey}T00:00:00`);
+    setShowAvail(false);
+    openDay(d);
+    setHighlight({ day: dayISOKey, time, ts: Date.now() });
+    setPendingFocus({ day: dayISOKey, time, ts: Date.now() });
+  };
+
+  const weekendBtnClass =
+    'w-14 md:w-16 h-10 md:h-11 rounded-2xl border border-neutral-700/70 bg-neutral-900/65 hover:bg-neutral-800/75 transition grid place-items-center shadow-[0_14px_40px_rgba(0,0,0,0.75)]';
 
   // =============================================================================
   // Year modal gestures (1:1 drag)
@@ -931,15 +980,6 @@ function BarberCalendarCore() {
     return Array.from(groups.entries()).map(([dayISO, list]) => ({ dayISO, list }));
   }, [hits]);
 
-  const formatDayLabel = (dayISOKey: string) => {
-    const d = new Date(`${dayISOKey}T00:00:00`);
-    const weekday = WEEKDAYS_FULL[(d.getDay() + 6) % 7];
-    const day = d.getDate();
-    const month = MONTHS[d.getMonth()];
-    const year = d.getFullYear();
-    return `${weekday} ${day} ${month} ${year}`;
-  };
-
   const openFromSearch = (dayISOKey: string, time: string) => {
     const d = new Date(`${dayISOKey}T00:00:00`);
     setShowSearch(false);
@@ -947,9 +987,6 @@ function BarberCalendarCore() {
     openDay(d);
     setHighlight({ day: dayISOKey, time, ts: Date.now() });
   };
-
-  const weekendBtnClass =
-    'w-14 md:w-16 h-10 md:h-11 rounded-2xl border border-neutral-700/70 bg-neutral-900/65 hover:bg-neutral-800/75 transition grid place-items-center shadow-[0_14px_40px_rgba(0,0,0,0.75)]';
 
   return (
     <div className="fixed inset-0 w-full h-dvh bg-black text-white overflow-hidden">
@@ -994,27 +1031,12 @@ function BarberCalendarCore() {
                 {/* reserved top area so nothing overlaps text */}
                 {isSat ? (
                   <button
-                    onClick={openEarliestAvail}
-                    className={`${weekendBtnClass} ${!earliestAvail ? 'opacity-50 cursor-not-allowed hover:bg-neutral-900/65' : ''}`}
-                    aria-label="Най-ранен свободен час"
-                    title={earliestTitle}
-                    disabled={!earliestAvail}
+                    onClick={() => setShowAvail(true)}
+                    className={weekendBtnClass}
+                    aria-label="Свободни часове"
+                    title="Свободни часове"
                   >
-                    {earliestLabel ? (
-                      <div
-                        className="flex flex-col items-center leading-none"
-                        style={{ fontFamily: BRAND.fontBody }}
-                      >
-                        <span className="text-[13px] md:text-[14px] font-semibold tabular-nums">
-                          {earliestLabel.time}
-                        </span>
-                        <span className="text-[10px] md:text-[11px] text-neutral-300 tabular-nums">
-                          {earliestLabel.ddmm}
-                        </span>
-                      </div>
-                    ) : (
-                      <span className="text-[18px] md:text-[20px] leading-none">–</span>
-                    )}
+                    <span className="text-[16px] md:text-[18px] leading-none">⏱</span>
                   </button>
                 ) : isSun ? (
                   <button
@@ -1109,6 +1131,85 @@ function BarberCalendarCore() {
           })}
         </div>
       </div>
+
+      {/* Availability Modal */}
+      {showAvail && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70"
+          onClick={() => setShowAvail(false)}
+          onTouchEnd={() => setShowAvail(false)}
+        >
+          <div
+            className="w-[min(100%-28px,860px)] max-w-2xl rounded-3xl border border-neutral-800 bg-neutral-950/95 shadow-2xl px-5 py-5 sm:px-7 sm:py-7"
+            onClick={(e) => e.stopPropagation()}
+            onTouchEnd={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between gap-3">
+              <div
+                className="text-[clamp(22px,4.2vw,32px)] leading-none select-none"
+                style={{ fontFamily: BRAND.fontTitle }}
+              >
+                Най-близки свободни часове
+              </div>
+
+              <button
+                onClick={() => syncFromRemote()}
+                className="rounded-2xl border border-neutral-700/70 bg-neutral-900/60 hover:bg-neutral-800/70 transition px-3 py-2 text-xs tracking-[0.18em] uppercase"
+                style={{ fontFamily: BRAND.fontBody }}
+                title="Обнови"
+              >
+                Refresh
+              </button>
+            </div>
+
+            <div className="mt-4 max-h-[62vh] overflow-y-auto pr-1">
+              {closestAvail.length === 0 ? (
+                <div className="text-neutral-400 text-sm" style={{ fontFamily: BRAND.fontBody }}>
+                  Няма свободни часове напред (в рамките на следващите месеци).
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {closestGrouped.map(({ dayISO, list }) => (
+                    <div
+                      key={dayISO}
+                      className="rounded-2xl border border-neutral-800 bg-neutral-900/40 p-3"
+                    >
+                      <div
+                        className="text-sm text-neutral-200 mb-2"
+                        style={{ fontFamily: BRAND.fontBody }}
+                      >
+                        {formatDayLabel(dayISO)}
+                      </div>
+
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                        {list.map((h) => (
+                          <button
+                            key={`${h.dayISO}_${h.time}`}
+                            onClick={() => openFromAvailability(h.dayISO, h.time)}
+                            className="rounded-xl border border-neutral-800 bg-neutral-950/60 hover:bg-neutral-900/70 transition px-3 py-2 text-center"
+                          >
+                            <div
+                              className="text-sm font-semibold tabular-nums"
+                              style={{ fontFamily: BRAND.fontBody }}
+                            >
+                              {h.time}
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="mt-4 text-[11px] text-neutral-500" style={{ fontFamily: BRAND.fontBody }}>
+              *Показва най-ранните свободни слотове от днес нататък.
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Search Modal */}
       {showSearch && (
@@ -1351,10 +1452,7 @@ export default function BarbershopAdminPanel() {
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    if (
-      process.env.NODE_ENV === 'production' &&
-      localStorage.getItem('bushi_unlocked') === '1'
-    ) {
+    if (process.env.NODE_ENV === 'production' && localStorage.getItem('bushi_unlocked') === '1') {
       setUnlocked(true);
     }
   }, []);
@@ -1386,17 +1484,10 @@ export default function BarbershopAdminPanel() {
           </div>
 
           <div className="mb-4 flex justify-center">
-            <img
-              src="/bush.png"
-              alt="Bushi logo"
-              className="max-h-16 w-auto object-contain"
-            />
+            <img src="/bush.png" alt="Bushi logo" className="max-h-16 w-auto object-contain" />
           </div>
 
-          <p
-            className="text-xs text-neutral-400 text-center mb-6"
-            style={{ fontFamily: BRAND.fontBody }}
-          >
+          <p className="text-xs text-neutral-400 text-center mb-6" style={{ fontFamily: BRAND.fontBody }}>
             Enter your PIN to open the schedule.
           </p>
 
@@ -1416,10 +1507,7 @@ export default function BarbershopAdminPanel() {
             </div>
 
             {error && (
-              <div
-                className="text-xs text-red-400 text-center"
-                style={{ fontFamily: BRAND.fontBody }}
-              >
+              <div className="text-xs text-red-400 text-center" style={{ fontFamily: BRAND.fontBody }}>
                 {error}
               </div>
             )}
