@@ -376,15 +376,75 @@ function BarberCalendarCore() {
   const cancelledSyncRef = useRef(false);
   const syncingRef = useRef(false);
 
+  // ✅ Dirty protection: prevent remote snapshot from wiping just-edited slot
+  const dirtySetRef = useRef<Map<string, number>>(new Map());
+  const dirtyDelRef = useRef<Map<string, number>>(new Map());
+
+  const pruneDirty = useCallback(() => {
+    const now = Date.now();
+    for (const [k, exp] of dirtySetRef.current.entries()) if (exp <= now) dirtySetRef.current.delete(k);
+    for (const [k, exp] of dirtyDelRef.current.entries()) if (exp <= now) dirtyDelRef.current.delete(k);
+  }, []);
+
+  const markDirtySet = useCallback((day: string, time: string, ttlMs = 4500) => {
+    pruneDirty();
+    dirtySetRef.current.set(`${day}_${time}`, Date.now() + ttlMs);
+    dirtyDelRef.current.delete(`${day}_${time}`);
+  }, [pruneDirty]);
+
+  const markDirtyDel = useCallback((day: string, time: string, ttlMs = 4500) => {
+    pruneDirty();
+    dirtyDelRef.current.set(`${day}_${time}`, Date.now() + ttlMs);
+    dirtySetRef.current.delete(`${day}_${time}`);
+  }, [pruneDirty]);
+
+  const mergeRemotePreservingDirty = useCallback((remote: Store, local: Store) => {
+    pruneDirty();
+
+    const merged: Store = { ...(remote || {}) };
+
+    // apply dirty SET from local on top of remote
+    for (const [day, slots] of Object.entries(local || {})) {
+      for (const [time, name] of Object.entries(slots || {})) {
+        const key = `${day}_${time}`;
+        const exp = dirtySetRef.current.get(key);
+        if (!exp) continue;
+
+        if (!merged[day]) merged[day] = {};
+        merged[day][time] = name;
+      }
+    }
+
+    // apply dirty DELETE (tombstones)
+    for (const [key, exp] of dirtyDelRef.current.entries()) {
+      void exp;
+      const idx = key.lastIndexOf('_');
+      if (idx <= 0) continue;
+      const day = key.slice(0, idx);
+      const time = key.slice(idx + 1);
+
+      if (merged[day]) {
+        delete merged[day][time];
+        if (Object.keys(merged[day]).length === 0) delete merged[day];
+      }
+    }
+
+    return merged;
+  }, [pruneDirty]);
+
   const applyRemoteSafely = useCallback((remote: Store) => {
-    saveBackup(remote);
     if (editingRef.current) {
       pendingRemoteRef.current = remote;
       return;
     }
     pendingRemoteRef.current = null;
-    setStore(remote);
-  }, []);
+
+    setStore((prev) => {
+      const merged = mergeRemotePreservingDirty(remote, prev);
+      saveBackup(merged);
+      return merged;
+    });
+  }, [mergeRemotePreservingDirty]);
 
   const syncFromRemote = useCallback(async () => {
     if (syncingRef.current) return;
@@ -426,10 +486,29 @@ function BarberCalendarCore() {
 
   const stopEditing = useCallback(() => {
     editingRef.current = false;
+
     if (pendingRemoteRef.current) {
       const remote = pendingRemoteRef.current;
       pendingRemoteRef.current = null;
-      setStore(remote);
+
+      setStore((prev) => {
+        const merged = mergeRemotePreservingDirty(remote, prev);
+        saveBackup(merged);
+        return merged;
+      });
+    }
+  }, [mergeRemotePreservingDirty]);
+
+  // ✅ Commit input when user taps hour/empty space/anything (so blur/save fires reliably)
+  const commitActiveSlotInput = useCallback(() => {
+    if (typeof document === 'undefined') return;
+    const el = document.activeElement as HTMLElement | null;
+    if (!el) return;
+    const tag = el.tagName?.toLowerCase();
+    if (tag === 'input' || tag === 'textarea' || tag === 'select') {
+      try {
+        (el as HTMLInputElement).blur();
+      } catch {}
     }
   }, []);
 
@@ -578,6 +657,11 @@ function BarberCalendarCore() {
     }, 170);
   };
 
+  const requestCloseDayEditor = useCallback(() => {
+    commitActiveSlotInput();
+    window.setTimeout(() => animateCloseDown(), 0);
+  }, [commitActiveSlotInput]);
+
   const onTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
     swipeStartX.current = e.touches[0].clientX;
     swipeStartY.current = e.touches[0].clientY;
@@ -632,7 +716,7 @@ function BarberCalendarCore() {
 
     if (gestureModeRef.current === 'vertical') {
       if (isTabletOrBigger() && dy >= VERTICAL_CLOSE_THRESHOLD) {
-        animateCloseDown();
+        requestCloseDayEditor();
       } else {
         setPanelStyle({
           transform: 'translateY(0)',
@@ -667,6 +751,10 @@ function BarberCalendarCore() {
       const name = nameRaw.trim();
       clearArmedTimeout();
 
+      // mark dirty BEFORE we update store (so merge is safe even if sync lands instantly)
+      if (name === '') markDirtyDel(day, time);
+      else markDirtySet(day, time);
+
       setStore((prev) => {
         const next: Store = { ...prev };
         if (!next[day]) next[day] = {};
@@ -693,13 +781,15 @@ function BarberCalendarCore() {
 
       setArmedRemove(null);
     },
-    [clearArmedTimeout, remoteReady],
+    [clearArmedTimeout, remoteReady, markDirtyDel, markDirtySet],
   );
 
   const confirmRemove = useCallback(
     (day: string, time: string) => {
       if (!remoteReady) return;
       clearArmedTimeout();
+
+      markDirtyDel(day, time);
 
       setStore((prev) => {
         const next: Store = { ...prev };
@@ -714,7 +804,7 @@ function BarberCalendarCore() {
       patchClearSlot(day, time);
       setArmedRemove(null);
     },
-    [clearArmedTimeout, remoteReady],
+    [clearArmedTimeout, remoteReady, markDirtyDel],
   );
 
   const selectedDayISO = useMemo(() => (selectedDate ? toISODate(selectedDate) : null), [selectedDate]);
@@ -1095,11 +1185,10 @@ function BarberCalendarCore() {
         </div>
       </div>
 
-      {/* Availability Modal */}
+      {/* Availability Modal (no click-through) */}
       {showAvail && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/70"
-          // IMPORTANT: prevent click-through by swallowing the click and closing on pointer-up
           onPointerDown={(e) => {
             if (e.target !== e.currentTarget) return;
             e.preventDefault();
@@ -1176,11 +1265,10 @@ function BarberCalendarCore() {
         </div>
       )}
 
-      {/* Search Modal */}
+      {/* Search Modal (no click-through) */}
       {showSearch && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/70"
-          // IMPORTANT: prevent click-through by swallowing the click and closing on pointer-up
           onPointerDown={(e) => {
             if (e.target !== e.currentTarget) return;
             e.preventDefault();
@@ -1302,19 +1390,49 @@ function BarberCalendarCore() {
 
       {/* Day Editor Modal */}
       {selectedDate && selectedDayISO && (
-        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/80" onMouseDown={() => setSelectedDate(null)}>
+        <div
+          className="fixed inset-0 z-40 flex items-center justify-center bg-black/80"
+          onPointerDown={(e) => {
+            if (e.target !== e.currentTarget) return;
+            commitActiveSlotInput();
+            e.preventDefault();
+            e.stopPropagation();
+          }}
+          onPointerUp={(e) => {
+            if (e.target !== e.currentTarget) return;
+            e.preventDefault();
+            e.stopPropagation();
+            requestCloseDayEditor();
+          }}
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+          }}
+        >
           <div
             className="max-w-6xl w-[94vw] md:w-[1100px] h-[90vh] rounded-2xl border border-neutral-700 bg-[rgb(10,10,10)] p-4 md:p-6 shadow-2xl overflow-hidden"
             style={panelStyle}
+            onPointerDown={(e) => e.stopPropagation()}
+            onPointerUp={(e) => e.stopPropagation()}
             onMouseDown={(e) => e.stopPropagation()}
             onTouchStart={(e) => e.stopPropagation()}
+            // ✅ this is the key: any tap inside panel (hour/empty/slot area) forces blur => saves
+            onPointerDownCapture={(e) => {
+              const t = e.target as Element | null;
+              if (!t) return;
+              if (isTypingTarget(t)) return;
+              commitActiveSlotInput();
+            }}
           >
             <div className="flex h-full flex-col">
               {/* Header: tap to close */}
               <div
                 className="flex items-center justify-between cursor-pointer"
-                onMouseDown={(e) => { e.stopPropagation(); animateCloseDown(); }}
-                onTouchStart={(e) => { e.stopPropagation(); animateCloseDown(); }}
+                onPointerDown={(e) => e.stopPropagation()}
+                onPointerUp={(e) => {
+                  e.stopPropagation();
+                  requestCloseDayEditor();
+                }}
                 title="Tap to close"
               >
                 <h3 className="text-2xl md:text-3xl font-bold" style={{ fontFamily: BRAND.fontTitle }}>
