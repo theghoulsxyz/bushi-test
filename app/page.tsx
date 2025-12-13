@@ -1,5 +1,5 @@
 'use client';
-// Bushi Admin — Month grid + Day editor + Year view + Search + Next available list (Supabase sync)
+// Bushi Admin — Month grid + Day editor + Year view + Search + Closest available (Supabase sync)
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
@@ -223,9 +223,7 @@ const SlotRow = React.memo(
     return (
       <div
         className={`relative rounded-2xl bg-neutral-900/80 border px-3 py-1 flex items-center gap-3 overflow-hidden transition ${
-          isHighlighted
-            ? 'border-white/60 ring-2 ring-white/20'
-            : 'border-neutral-800'
+          isHighlighted ? 'border-white/60 ring-2 ring-white/20' : 'border-neutral-800'
         }`}
         style={
           isHighlighted
@@ -259,9 +257,7 @@ const SlotRow = React.memo(
 
           {hasName && (
             <button
-              onClick={() =>
-                isArmed ? onConfirmRemove(dayISO, time) : onArm(timeKey)
-              }
+              onClick={() => (isArmed ? onConfirmRemove(dayISO, time) : onArm(timeKey))}
               className={`shrink-0 w-8 h-8 md:w-9 md:h-9 rounded-lg grid place-items-center transition border ${
                 isArmed
                   ? 'bg-red-900/30 border-red-600/70'
@@ -678,10 +674,7 @@ function BarberCalendarCore() {
   );
 
   // Selected day helpers
-  const selectedDayISO = useMemo(
-    () => (selectedDate ? toISODate(selectedDate) : null),
-    [selectedDate],
-  );
+  const selectedDayISO = useMemo(() => (selectedDate ? toISODate(selectedDate) : null), [selectedDate]);
 
   const selectedDayMap = useMemo(() => {
     if (!selectedDayISO) return {};
@@ -794,6 +787,8 @@ function BarberCalendarCore() {
 
   const weekendBtnClass =
     'w-14 md:w-16 h-10 md:h-11 rounded-2xl border border-neutral-700/70 bg-neutral-900/65 hover:bg-neutral-800/75 transition grid place-items-center shadow-[0_14px_40px_rgba(0,0,0,0.75)]';
+
+  const weekendEmojiClass = 'text-[18px] md:text-[20px] leading-none'; // <- same for both
 
   // =============================================================================
   // Year modal gestures (1:1 drag)
@@ -1036,7 +1031,7 @@ function BarberCalendarCore() {
                     aria-label="Свободни часове"
                     title="Свободни часове"
                   >
-                    <span className="text-[16px] md:text-[18px] leading-none">⏱</span>
+                    <span className={weekendEmojiClass}>⏱️</span>
                   </button>
                 ) : isSun ? (
                   <button
@@ -1045,7 +1040,7 @@ function BarberCalendarCore() {
                     aria-label="Търсене"
                     title="Търсене"
                   >
-                    <span className="text-xl md:text-2xl leading-none">⌕</span>
+                    <span className={weekendEmojiClass}>🔍</span>
                   </button>
                 ) : (
                   <div className="h-10 md:h-11" aria-hidden="true" />
@@ -1089,9 +1084,7 @@ function BarberCalendarCore() {
               <button key={key} onClick={() => openDay(d)} className={cls}>
                 <div className="flex flex-col items-center justify-center gap-2 w-full">
                   <span
-                    className={`select-none text-[clamp(17px,3.5vw,32px)] ${
-                      isToday ? 'font-extrabold' : ''
-                    }`}
+                    className={`select-none text-[clamp(17px,3.5vw,32px)] ${isToday ? 'font-extrabold' : ''}`}
                     style={{ fontFamily: BRAND.fontNumbers }}
                   >
                     {inMonth && full ? 'X' : num}
@@ -1175,10 +1168,7 @@ function BarberCalendarCore() {
                       key={dayISO}
                       className="rounded-2xl border border-neutral-800 bg-neutral-900/40 p-3"
                     >
-                      <div
-                        className="text-sm text-neutral-200 mb-2"
-                        style={{ fontFamily: BRAND.fontBody }}
-                      >
+                      <div className="text-sm text-neutral-200 mb-2" style={{ fontFamily: BRAND.fontBody }}>
                         {formatDayLabel(dayISO)}
                       </div>
 
@@ -1189,10 +1179,7 @@ function BarberCalendarCore() {
                             onClick={() => openFromAvailability(h.dayISO, h.time)}
                             className="rounded-xl border border-neutral-800 bg-neutral-950/60 hover:bg-neutral-900/70 transition px-3 py-2 text-center"
                           >
-                            <div
-                              className="text-sm font-semibold tabular-nums"
-                              style={{ fontFamily: BRAND.fontBody }}
-                            >
+                            <div className="text-sm font-semibold tabular-nums" style={{ fontFamily: BRAND.fontBody }}>
                               {h.time}
                             </div>
                           </button>
@@ -1260,10 +1247,7 @@ function BarberCalendarCore() {
                       key={dayISO}
                       className="rounded-2xl border border-neutral-800 bg-neutral-900/40 p-3"
                     >
-                      <div
-                        className="text-sm text-neutral-200 mb-2"
-                        style={{ fontFamily: BRAND.fontBody }}
-                      >
+                      <div className="text-sm text-neutral-200 mb-2" style={{ fontFamily: BRAND.fontBody }}>
                         {formatDayLabel(dayISO)}
                       </div>
 
@@ -1275,10 +1259,7 @@ function BarberCalendarCore() {
                             className="rounded-xl border border-neutral-800 bg-neutral-950/60 hover:bg-neutral-900/70 transition px-3 py-2 text-left"
                           >
                             <div className="flex items-center justify-between gap-3">
-                              <div
-                                className="text-sm font-semibold tabular-nums"
-                                style={{ fontFamily: BRAND.fontBody }}
-                              >
+                              <div className="text-sm font-semibold tabular-nums" style={{ fontFamily: BRAND.fontBody }}>
                                 {h.time}
                               </div>
                               <div
@@ -1327,10 +1308,7 @@ function BarberCalendarCore() {
             }}
           >
             <div className="flex items-center justify-center">
-              <div
-                className="text-[clamp(30px,6vw,44px)] leading-none select-none"
-                style={{ fontFamily: BRAND.fontTitle }}
-              >
+              <div className="text-[clamp(30px,6vw,44px)] leading-none select-none" style={{ fontFamily: BRAND.fontTitle }}>
                 {viewYear}
               </div>
             </div>
@@ -1360,10 +1338,7 @@ function BarberCalendarCore() {
 
       {/* Day Editor Modal */}
       {selectedDate && selectedDayISO && (
-        <div
-          className="fixed inset-0 z-40 flex items-center justify-center bg-black/80"
-          onMouseDown={() => setSelectedDate(null)}
-        >
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/80" onMouseDown={() => setSelectedDate(null)}>
           <div
             className="max-w-6xl w-[94vw] md:w-[1100px] h-[90vh] rounded-2xl border border-neutral-700 bg-[rgb(10,10,10)] p-4 md:p-6 shadow-2xl overflow-hidden"
             style={panelStyle}
@@ -1384,38 +1359,23 @@ function BarberCalendarCore() {
                 }}
                 title="Tap to close"
               >
-                <h3
-                  className="text-2xl md:text-3xl font-bold"
-                  style={{ fontFamily: BRAND.fontTitle }}
-                >
-                  {WEEKDAYS_FULL[(selectedDate.getDay() + 6) % 7]}{' '}
-                  {selectedDate.getDate()} {MONTHS[selectedDate.getMonth()]}{' '}
+                <h3 className="text-2xl md:text-3xl font-bold" style={{ fontFamily: BRAND.fontTitle }}>
+                  {WEEKDAYS_FULL[(selectedDate.getDay() + 6) % 7]} {selectedDate.getDate()} {MONTHS[selectedDate.getMonth()]}{' '}
                   {selectedDate.getFullYear()}
                 </h3>
                 <div className="w-10 md:w-12" />
               </div>
 
               {/* Content area: swipe left/right to change day, swipe down to close (tablet+) */}
-              <div
-                className="mt-4 flex-1 overflow-y-auto md:overflow-visible"
-                onTouchStart={onTouchStart}
-                onTouchMove={onTouchMove}
-                onTouchEnd={onTouchEnd}
-                style={swipeStyle}
-              >
-                <div
-                  className="grid grid-cols-1 sm:grid-cols-2 gap-2.5"
-                  style={{ gridAutoRows: 'minmax(32px,1fr)' }}
-                >
+              <div className="mt-4 flex-1 overflow-y-auto md:overflow-visible" onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd} style={swipeStyle}>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5" style={{ gridAutoRows: 'minmax(32px,1fr)' }}>
                   {DAY_SLOTS.map((time) => {
                     const value = (selectedDayMap as Record<string, string>)[time] || '';
-                    const isSaved =
-                      !!(savedPulse && savedPulse.day === selectedDayISO && savedPulse.time === time);
+                    const isSaved = !!(savedPulse && savedPulse.day === selectedDayISO && savedPulse.time === time);
                     const timeKey = `${selectedDayISO}_${time}`;
                     const isArmed = armedRemove === timeKey;
 
-                    const isHighlighted =
-                      !!highlight && highlight.day === selectedDayISO && highlight.time === time;
+                    const isHighlighted = !!highlight && highlight.day === selectedDayISO && highlight.time === time;
 
                     return (
                       <SlotRow
