@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 type Store = Record<string, Record<string, string>>;
 
 // IMPORTANT: these env names must match Netlify + .env.local
@@ -18,6 +21,16 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 const TIME_RE = /^\d{2}:\d{2}$/;
 
+const jsonNoStore = (data: any, status = 200) =>
+  NextResponse.json(data, {
+    status,
+    headers: {
+      "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+      Pragma: "no-cache",
+      Expires: "0",
+    },
+  });
+
 // -----------------------------------------------------------------------------
 // GET  /api/appointments
 // Returns full calendar as: { "2025-12-01": { "08:00": "Name", ... }, ... }
@@ -30,7 +43,7 @@ export async function GET() {
 
     if (error) {
       console.error("GET /api/appointments error:", error);
-      return NextResponse.json({}, { status: 200 });
+      return jsonNoStore({}, 200);
     }
 
     const store: Store = {};
@@ -44,10 +57,10 @@ export async function GET() {
       store[day][time] = name || "";
     });
 
-    return NextResponse.json(store, { status: 200 });
+    return jsonNoStore(store, 200);
   } catch (e) {
     console.error("GET /api/appointments exception:", e);
-    return NextResponse.json({}, { status: 200 });
+    return jsonNoStore({}, 200);
   }
 }
 
@@ -62,7 +75,7 @@ export async function PATCH(req: NextRequest) {
     const body = await req.json().catch(() => null);
 
     if (!body || typeof body !== "object") {
-      return NextResponse.json({ error: "Invalid payload" }, { status: 400 });
+      return jsonNoStore({ error: "Invalid payload" }, 400);
     }
 
     const op = (body as any).op as string;
@@ -71,17 +84,11 @@ export async function PATCH(req: NextRequest) {
     const nameRaw = (body as any).name as string | undefined;
 
     if (!op || !day || !time) {
-      return NextResponse.json(
-        { error: "Missing op/day/time" },
-        { status: 400 }
-      );
+      return jsonNoStore({ error: "Missing op/day/time" }, 400);
     }
 
     if (!DAY_RE.test(day) || !TIME_RE.test(time)) {
-      return NextResponse.json(
-        { error: "Invalid day/time format" },
-        { status: 400 }
-      );
+      return jsonNoStore({ error: "Invalid day/time format" }, 400);
     }
 
     if (op === "clear") {
@@ -93,13 +100,10 @@ export async function PATCH(req: NextRequest) {
 
       if (delErr) {
         console.error("PATCH clear error:", delErr);
-        return NextResponse.json(
-          { error: "Failed to clear slot" },
-          { status: 500 }
-        );
+        return jsonNoStore({ error: "Failed to clear slot" }, 500);
       }
 
-      return NextResponse.json({ ok: true }, { status: 200 });
+      return jsonNoStore({ ok: true }, 200);
     }
 
     if (op === "set") {
@@ -115,24 +119,18 @@ export async function PATCH(req: NextRequest) {
 
         if (delErr) {
           console.error("PATCH set->clear error:", delErr);
-          return NextResponse.json(
-            { error: "Failed to clear slot" },
-            { status: 500 }
-          );
+          return jsonNoStore({ error: "Failed to clear slot" }, 500);
         }
 
-        return NextResponse.json({ ok: true }, { status: 200 });
+        return jsonNoStore({ ok: true }, 200);
       }
 
-      // Prefer UPSERT (requires unique constraint on (day,time)).
-      // If your table doesn't have it yet, add it in Supabase:
-      //   create unique index appointments_day_time_unique on appointments(day, time);
+      // Requires unique index on (day,time) (you already created it)
       const { error: upsertErr } = await supabase
         .from("appointments")
         .upsert([{ day, time, name }], { onConflict: "day,time" });
 
       if (upsertErr) {
-        // Fallback: delete+insert (works even without unique constraint)
         console.warn(
           "PATCH set upsert failed, falling back to delete+insert:",
           upsertErr
@@ -146,9 +144,9 @@ export async function PATCH(req: NextRequest) {
 
         if (delErr) {
           console.error("PATCH set fallback delete error:", delErr);
-          return NextResponse.json(
+          return jsonNoStore(
             { error: "Failed to set slot (fallback delete)" },
-            { status: 500 }
+            500
           );
         }
 
@@ -158,23 +156,20 @@ export async function PATCH(req: NextRequest) {
 
         if (insErr) {
           console.error("PATCH set fallback insert error:", insErr);
-          return NextResponse.json(
+          return jsonNoStore(
             { error: "Failed to set slot (fallback insert)" },
-            { status: 500 }
+            500
           );
         }
       }
 
-      return NextResponse.json({ ok: true }, { status: 200 });
+      return jsonNoStore({ ok: true }, 200);
     }
 
-    return NextResponse.json({ error: "Unknown op" }, { status: 400 });
+    return jsonNoStore({ error: "Unknown op" }, 400);
   } catch (e) {
     console.error("PATCH /api/appointments exception:", e);
-    return NextResponse.json(
-      { error: "Exception while patching" },
-      { status: 500 }
-    );
+    return jsonNoStore({ error: "Exception while patching" }, 500);
   }
 }
 
@@ -189,7 +184,7 @@ export async function POST(req: NextRequest) {
     const body = await req.json().catch(() => null);
 
     if (!body || typeof body !== "object") {
-      return NextResponse.json({ error: "Invalid payload" }, { status: 400 });
+      return jsonNoStore({ error: "Invalid payload" }, 400);
     }
 
     const allow = (body as any)._dangerouslyOverwriteAll === true;
@@ -198,16 +193,15 @@ export async function POST(req: NextRequest) {
     // IMPORTANT: This blocks your OLD app versions from wiping data,
     // because they used to POST the store directly (without this flag).
     if (!allow || !store || typeof store !== "object") {
-      return NextResponse.json(
+      return jsonNoStore(
         {
           error:
             "Bulk overwrite is disabled. Use PATCH for single-slot updates.",
         },
-        { status: 400 }
+        400
       );
     }
 
-    // Build flat list of rows to insert
     const rows: { day: string; time: string; name: string }[] = [];
 
     for (const day of Object.keys(store)) {
@@ -218,44 +212,39 @@ export async function POST(req: NextRequest) {
       for (const time of Object.keys(slots)) {
         if (!TIME_RE.test(time)) continue;
         const name = (slots[time] || "").trim();
-        if (name === "") continue; // skip empty
+        if (name === "") continue;
         rows.push({ day, time, name });
       }
     }
 
-    // 1) Delete ALL rows in appointments
+    // Delete ALL rows. Use day IS NOT NULL (safer than relying on an "id" column).
     const { error: delError } = await supabase
       .from("appointments")
       .delete()
-      .not("id", "is", null);
+      .not("day", "is", null);
 
     if (delError) {
       console.error("POST /api/appointments delete error:", delError);
-      return NextResponse.json(
+      return jsonNoStore(
         { error: "Failed to clear existing appointments" },
-        { status: 500 }
+        500
       );
     }
 
-    // 2) Insert new snapshot (if any)
     if (rows.length > 0) {
-      const { error: insError } = await supabase.from("appointments").insert(rows);
+      const { error: insError } = await supabase
+        .from("appointments")
+        .insert(rows);
 
       if (insError) {
         console.error("POST /api/appointments insert error:", insError);
-        return NextResponse.json(
-          { error: "Failed to save appointments" },
-          { status: 500 }
-        );
+        return jsonNoStore({ error: "Failed to save appointments" }, 500);
       }
     }
 
-    return NextResponse.json({ ok: true }, { status: 200 });
+    return jsonNoStore({ ok: true }, 200);
   } catch (e) {
     console.error("POST /api/appointments exception:", e);
-    return NextResponse.json(
-      { error: "Exception while saving" },
-      { status: 500 }
-    );
+    return jsonNoStore({ error: "Exception while saving" }, 500);
   }
 }
