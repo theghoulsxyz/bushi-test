@@ -695,7 +695,7 @@ function BarberCalendarCore() {
   };
 
   // =============================================================================
-  // Year modal gestures (1:1 drag)  ✅ FIXED (no duplicate JSX props)
+  // Year modal gestures (1:1 drag)
   // =============================================================================
   const yearStartX = useRef<number | null>(null);
   const yearStartY = useRef<number | null>(null);
@@ -723,7 +723,7 @@ function BarberCalendarCore() {
     setYearStyle({
       transform: `translateX(${deltaYear > 0 ? -22 : 22}px)`,
       opacity: 0.55,
-      transition: `transform 140ms ${SNAP_EASE}, opacity 140ms ${SNAP_EASE}`,
+      transition: `transform 140ms cubic-bezier(0.25, 0.9, 0.25, 1), opacity 140ms cubic-bezier(0.25, 0.9, 0.25, 1)`,
     });
     setTimeout(() => {
       setViewYear((y) => y + deltaYear);
@@ -736,7 +736,7 @@ function BarberCalendarCore() {
         setYearStyle({
           transform: 'translateX(0)',
           opacity: 1,
-          transition: `transform 160ms ${SNAP_EASE}, opacity 160ms ${SNAP_EASE}`,
+          transition: `transform 160ms cubic-bezier(0.25, 0.9, 0.25, 1), opacity 160ms cubic-bezier(0.25, 0.9, 0.25, 1)`,
         });
       });
     }, 140);
@@ -746,7 +746,7 @@ function BarberCalendarCore() {
     setYearStyle({
       transform: 'translateY(160px)',
       opacity: 0,
-      transition: `transform 170ms ${SNAP_EASE}, opacity 150ms ${SNAP_EASE}`,
+      transition: `transform 170ms cubic-bezier(0.25, 0.9, 0.25, 1), opacity 150ms cubic-bezier(0.25, 0.9, 0.25, 1)`,
     });
     setTimeout(() => {
       setShowYear(false);
@@ -816,7 +816,7 @@ function BarberCalendarCore() {
         setYearStyle({
           transform: 'translateY(0)',
           opacity: 1,
-          transition: `transform 160ms ${SNAP_EASE}, opacity 140ms ${SNAP_EASE}`,
+          transition: `transform 160ms cubic-bezier(0.25, 0.9, 0.25, 1), opacity 140ms cubic-bezier(0.25, 0.9, 0.25, 1)`,
         });
         setTimeout(() => setYearStyle({}), 160);
       }
@@ -830,7 +830,7 @@ function BarberCalendarCore() {
       } else {
         setYearStyle({
           transform: 'translateX(0)',
-          transition: `transform 170ms ${SNAP_EASE}`,
+          transition: `transform 170ms cubic-bezier(0.25, 0.9, 0.25, 1)`,
         });
       }
       yearModeRef.current = 'none';
@@ -839,7 +839,7 @@ function BarberCalendarCore() {
 
     setYearStyle({
       transform: 'translateX(0)',
-      transition: `transform 160ms ${SNAP_EASE}`,
+      transition: `transform 160ms cubic-bezier(0.25, 0.9, 0.25, 1)`,
     });
     yearModeRef.current = 'none';
   };
@@ -855,7 +855,7 @@ function BarberCalendarCore() {
 
     const out: Hit[] = [];
     for (const [dayISOKey, dayMap] of Object.entries(store)) {
-      if (dayISOKey < todayISO) continue; // ✅ past ignored
+      if (dayISOKey < todayISO) continue; // past ignored
 
       for (const [time, name] of Object.entries(dayMap || {})) {
         const n = (name || '').trim();
@@ -923,31 +923,37 @@ function BarberCalendarCore() {
           >
             {`${MONTHS[viewMonth]} ${viewYear}`}
           </button>
-
-          {/* Search button */}
-          <button
-            onClick={() => setShowSearch(true)}
-            className="shrink-0 w-11 h-11 md:w-12 md:h-12 rounded-2xl border border-neutral-700/70 bg-neutral-900/60 hover:bg-neutral-800/70 transition grid place-items-center"
-            aria-label="Search"
-            title="Search (Ctrl+K)"
-          >
-            <span className="text-xl md:text-2xl leading-none">⌕</span>
-          </button>
         </div>
 
-        {/* Weekday labels (bolder) */}
+        {/* Weekday labels (bolder) + Search over "Нед" */}
         <div
           className="mt-[clamp(12px,2.8vw,28px)] grid grid-cols-7 gap-[clamp(6px,1.2vw,16px)] text-center"
           style={{ fontFamily: BRAND.fontTitle }}
         >
-          {WEEKDAYS_SHORT.map((d) => (
-            <div
-              key={d}
-              className="text-center font-extrabold text-gray-200 text-[clamp(14px,2.8vw,22px)]"
-            >
-              {d}
-            </div>
-          ))}
+          {WEEKDAYS_SHORT.map((d, idx) => {
+            const isSunday = idx === 6;
+
+            return (
+              <div key={d} className="relative">
+                {/* Search button floating above "Нед" */}
+                {isSunday && (
+                  <button
+                    onClick={() => setShowSearch(true)}
+                    className="absolute left-1/2 -translate-x-1/2 -top-7 md:-top-8 w-10 h-10 md:w-11 md:h-11 rounded-2xl border border-neutral-700/70 bg-neutral-900/65 hover:bg-neutral-800/75 transition grid place-items-center shadow-[0_14px_40px_rgba(0,0,0,0.75)]"
+                    aria-label="Search"
+                    title="Search (Ctrl+K)"
+                    style={{ zIndex: 5 }}
+                  >
+                    <span className="text-xl md:text-2xl leading-none">⌕</span>
+                  </button>
+                )}
+
+                <div className="text-center font-extrabold text-gray-200 text-[clamp(14px,2.8vw,22px)]">
+                  {d}
+                </div>
+              </div>
+            );
+          })}
         </div>
 
         {/* Month grid */}
@@ -1043,8 +1049,8 @@ function BarberCalendarCore() {
               >
                 Search client
               </div>
-              <div className="text-[11px] text-neutral-400" style={{ fontFamily: BRAND.fontBody }}>
-                Today → future
+              <div className="text-[11px] text-neutral-500" style={{ fontFamily: BRAND.fontBody }}>
+                Ctrl+K • / • Esc
               </div>
             </div>
 
@@ -1062,11 +1068,11 @@ function BarberCalendarCore() {
             <div className="mt-4 max-h-[58vh] overflow-y-auto pr-1">
               {searchQ.trim().length === 0 ? (
                 <div className="text-neutral-400 text-sm" style={{ fontFamily: BRAND.fontBody }}>
-                  Start typing to search from today forward.
+                  Start typing to search.
                 </div>
               ) : hits.length === 0 ? (
                 <div className="text-neutral-400 text-sm" style={{ fontFamily: BRAND.fontBody }}>
-                  No results (from today forward).
+                  No results.
                 </div>
               ) : (
                 <div className="space-y-3">
@@ -1128,7 +1134,6 @@ function BarberCalendarCore() {
             style={yearStyle}
             onClick={(e) => e.stopPropagation()}
             onMouseDown={(e) => e.stopPropagation()}
-            // ✅ ONLY ONE onTouchStart / Move / End (no duplicates)
             onTouchStart={(e) => {
               e.stopPropagation();
               onYearTouchStart(e);
