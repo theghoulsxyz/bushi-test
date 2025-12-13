@@ -180,6 +180,7 @@ async function patchSetSlot(day: string, time: string, name: string): Promise<bo
   try {
     const res = await fetch(API_ENDPOINT, {
       method: 'PATCH',
+      cache: 'no-store',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ op: 'set', day, time, name }),
     });
@@ -193,6 +194,7 @@ async function patchClearSlot(day: string, time: string): Promise<boolean> {
   try {
     const res = await fetch(API_ENDPOINT, {
       method: 'PATCH',
+      cache: 'no-store',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ op: 'clear', day, time }),
     });
@@ -660,6 +662,27 @@ function BarberCalendarCore() {
     setTimeout(() => setPanelStyle({}), 160);
   };
 
+  // Header tap-to-close guard (prevents closing while scrolling/dragging)
+  const headerTouchStartY = useRef<number | null>(null);
+  const headerTouchMoved = useRef(false);
+
+  const onHeaderTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
+    headerTouchMoved.current = false;
+    headerTouchStartY.current = e.touches[0]?.clientY ?? null;
+  };
+
+  const onHeaderTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (headerTouchStartY.current == null) return;
+    const dy = (e.touches[0]?.clientY ?? 0) - headerTouchStartY.current;
+    if (Math.abs(dy) > 10) headerTouchMoved.current = true;
+  };
+
+  const onHeaderTouchEnd = (e: React.TouchEvent<HTMLDivElement>) => {
+    e.stopPropagation();
+    if (headerTouchMoved.current) return;
+    animateCloseDown();
+  };
+
   // SAVE / DELETE (SAFE PATCH)
   const saveName = useCallback(
     (day: string, time: string, nameRaw: string) => {
@@ -993,14 +1016,18 @@ function BarberCalendarCore() {
               const now = new Date();
               setViewYear(now.getFullYear());
               setViewMonth(now.getMonth());
+              setShowYear(false);
+              setShowSearch(false);
+              setShowAvail(false);
+              setSelectedDate(null);
               syncFromRemote();
             }}
             title={remoteReady ? 'Refresh' : 'Loading…'}
           />
 
-          {/* Month title (no wrap) */}
+          {/* Month title (no wrap) — now toggles Year view */}
           <button
-            onClick={() => setShowYear(true)}
+            onClick={() => setShowYear((v) => !v)}
             className="text-3xl sm:text-4xl md:text-7xl font-bold cursor-pointer hover:text-gray-300 select-none text-right flex-1 min-w-0 whitespace-nowrap"
             style={{ fontFamily: BRAND.fontTitle }}
             title="Open year view"
@@ -1266,7 +1293,11 @@ function BarberCalendarCore() {
 
       {/* Day Editor Modal */}
       {selectedDate && selectedDayISO && (
-        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/80" onMouseDown={() => setSelectedDate(null)}>
+        <div
+          className="fixed inset-0 z-40 flex items-center justify-center bg-black/80"
+          onMouseDown={() => setSelectedDate(null)}
+          onTouchEnd={() => setSelectedDate(null)}
+        >
           <div
             className="max-w-6xl w-[94vw] md:w-[1100px] h-[90vh] rounded-2xl border border-neutral-700 bg-[rgb(10,10,10)] p-4 md:p-6 shadow-2xl overflow-hidden"
             style={panelStyle}
@@ -1274,11 +1305,13 @@ function BarberCalendarCore() {
             onTouchStart={(e) => e.stopPropagation()}
           >
             <div className="flex h-full flex-col">
-              {/* Header: tap to close */}
+              {/* Header: tap to close (without being too aggressive) */}
               <div
                 className="flex items-center justify-between cursor-pointer"
-                onMouseDown={(e) => { e.stopPropagation(); animateCloseDown(); }}
-                onTouchStart={(e) => { e.stopPropagation(); animateCloseDown(); }}
+                onClick={(e) => { e.stopPropagation(); animateCloseDown(); }}
+                onTouchStart={(e) => { e.stopPropagation(); onHeaderTouchStart(e); }}
+                onTouchMove={(e) => { e.stopPropagation(); onHeaderTouchMove(e); }}
+                onTouchEnd={onHeaderTouchEnd}
                 title="Tap to close"
               >
                 <h3 className="text-2xl md:text-3xl font-bold" style={{ fontFamily: BRAND.fontTitle }}>
