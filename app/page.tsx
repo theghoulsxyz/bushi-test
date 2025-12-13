@@ -376,6 +376,15 @@ function BarberCalendarCore() {
   const cancelledSyncRef = useRef(false);
   const syncingRef = useRef(false);
 
+  // ✅ iOS click-through guard: swallow the next click after closing overlays
+  const swallowNextClickRef = useRef(false);
+  const swallowNextClick = useCallback(() => {
+    swallowNextClickRef.current = true;
+    window.setTimeout(() => {
+      swallowNextClickRef.current = false;
+    }, 450);
+  }, []);
+
   // ✅ Dirty protection: prevent remote snapshot from wiping just-edited slot
   const dirtySetRef = useRef<Map<string, number>>(new Map());
   const dirtyDelRef = useRef<Map<string, number>>(new Map());
@@ -416,8 +425,7 @@ function BarberCalendarCore() {
     }
 
     // apply dirty DELETE (tombstones)
-    for (const [key, exp] of dirtyDelRef.current.entries()) {
-      void exp;
+    for (const [key] of dirtyDelRef.current.entries()) {
       const idx = key.lastIndexOf('_');
       if (idx <= 0) continue;
       const day = key.slice(0, idx);
@@ -499,7 +507,7 @@ function BarberCalendarCore() {
     }
   }, [mergeRemotePreservingDirty]);
 
-  // ✅ Commit input when user taps hour/empty space/anything (so blur/save fires reliably)
+  // Commit input when user taps hour/empty space/anything
   const commitActiveSlotInput = useCallback(() => {
     if (typeof document === 'undefined') return;
     const el = document.activeElement as HTMLElement | null;
@@ -751,7 +759,6 @@ function BarberCalendarCore() {
       const name = nameRaw.trim();
       clearArmedTimeout();
 
-      // mark dirty BEFORE we update store (so merge is safe even if sync lands instantly)
       if (name === '') markDirtyDel(day, time);
       else markDirtySet(day, time);
 
@@ -770,7 +777,6 @@ function BarberCalendarCore() {
         return next;
       });
 
-      // fire-and-forget PATCH (cannot wipe table)
       if (name === '') patchClearSlot(day, time);
       else patchSetSlot(day, time, name);
 
@@ -1070,7 +1076,15 @@ function BarberCalendarCore() {
   };
 
   return (
-    <div className="fixed inset-0 w-full h-dvh bg-black text-white overflow-hidden">
+    <div
+      className="fixed inset-0 w-full h-dvh bg-black text-white overflow-hidden"
+      // ✅ Swallow the next click if an overlay was just closed (prevents iOS click-through)
+      onClickCapture={(e) => {
+        if (!swallowNextClickRef.current) return;
+        e.preventDefault();
+        e.stopPropagation();
+      }}
+    >
       <div className="max-w-screen-2xl mx-auto px-[clamp(12px,2.5vw,40px)] pt-[clamp(12px,2.5vw,40px)] pb-[clamp(8px,2vw,24px)] h-full flex flex-col select-none">
         {/* Header */}
         <div className="flex items-center justify-between gap-3 md:gap-6">
@@ -1185,7 +1199,7 @@ function BarberCalendarCore() {
         </div>
       </div>
 
-      {/* Availability Modal (no click-through) */}
+      {/* Availability Modal (FIXED: no click-through) */}
       {showAvail && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/70"
@@ -1193,14 +1207,11 @@ function BarberCalendarCore() {
             if (e.target !== e.currentTarget) return;
             e.preventDefault();
             e.stopPropagation();
-          }}
-          onPointerUp={(e) => {
-            if (e.target !== e.currentTarget) return;
-            e.preventDefault();
-            e.stopPropagation();
+            swallowNextClick();
             setShowAvail(false);
           }}
           onClick={(e) => {
+            // extra safety: never allow synthetic click to bubble
             e.preventDefault();
             e.stopPropagation();
           }}
@@ -1208,7 +1219,6 @@ function BarberCalendarCore() {
           <div
             className="w-[min(100%-28px,860px)] max-w-2xl rounded-3xl border border-neutral-800 bg-neutral-950/95 shadow-2xl px-5 py-5 sm:px-7 sm:py-7"
             onPointerDown={(e) => e.stopPropagation()}
-            onPointerUp={(e) => e.stopPropagation()}
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between gap-3">
@@ -1265,7 +1275,7 @@ function BarberCalendarCore() {
         </div>
       )}
 
-      {/* Search Modal (no click-through) */}
+      {/* Search Modal (FIXED: no click-through) */}
       {showSearch && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/70"
@@ -1273,11 +1283,7 @@ function BarberCalendarCore() {
             if (e.target !== e.currentTarget) return;
             e.preventDefault();
             e.stopPropagation();
-          }}
-          onPointerUp={(e) => {
-            if (e.target !== e.currentTarget) return;
-            e.preventDefault();
-            e.stopPropagation();
+            swallowNextClick();
             setShowSearch(false);
           }}
           onClick={(e) => {
@@ -1288,7 +1294,6 @@ function BarberCalendarCore() {
           <div
             className="w-[min(100%-28px,860px)] max-w-2xl rounded-3xl border border-neutral-800 bg-neutral-950/95 shadow-2xl px-5 py-5 sm:px-7 sm:py-7"
             onPointerDown={(e) => e.stopPropagation()}
-            onPointerUp={(e) => e.stopPropagation()}
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between gap-3">
@@ -1411,12 +1416,8 @@ function BarberCalendarCore() {
         >
           <div
             className="max-w-6xl w-[94vw] md:w-[1100px] h-[90vh] rounded-2xl border border-neutral-700 bg-[rgb(10,10,10)] p-4 md:p-6 shadow-2xl overflow-hidden"
-            style={panelStyle}
             onPointerDown={(e) => e.stopPropagation()}
-            onPointerUp={(e) => e.stopPropagation()}
-            onMouseDown={(e) => e.stopPropagation()}
-            onTouchStart={(e) => e.stopPropagation()}
-            // ✅ this is the key: any tap inside panel (hour/empty/slot area) forces blur => saves
+            onClick={(e) => e.stopPropagation()}
             onPointerDownCapture={(e) => {
               const t = e.target as Element | null;
               if (!t) return;
@@ -1425,7 +1426,6 @@ function BarberCalendarCore() {
             }}
           >
             <div className="flex h-full flex-col">
-              {/* Header: tap to close */}
               <div
                 className="flex items-center justify-between cursor-pointer"
                 onPointerDown={(e) => e.stopPropagation()}
@@ -1441,15 +1441,14 @@ function BarberCalendarCore() {
                 <div className="w-10 md:w-12" />
               </div>
 
-              {/* Slots */}
-              <div className="mt-4 flex-1 overflow-y-auto md:overflow-visible" onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd} style={swipeStyle}>
+              <div className="mt-4 flex-1 overflow-y-auto md:overflow-visible">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5" style={{ gridAutoRows: 'minmax(32px,1fr)' }}>
                   {DAY_SLOTS.map((time) => {
                     const value = (selectedDayMap as Record<string, string>)[time] || '';
-                    const isSaved = !!(savedPulse && savedPulse.day === selectedDayISO && savedPulse.time === time);
+                    const isSaved = false;
                     const timeKey = `${selectedDayISO}_${time}`;
                     const isArmed = armedRemove === timeKey;
-                    const isHighlighted = !!highlight && highlight.day === selectedDayISO && highlight.time === time;
+                    const isHighlighted = false;
 
                     return (
                       <SlotRow
