@@ -870,7 +870,134 @@ function BarberCalendarCore() {
     'w-14 md:w-16 h-10 md:h-11 rounded-2xl border border-neutral-700/70 bg-neutral-900/65 hover:bg-neutral-800/75 transition grid place-items-center shadow-[0_14px_40px_rgba(0,0,0,0.75)]';
   const weekendEmojiClass = 'text-[18px] md:text-[20px] leading-none';
 
-  // Year modal gestures (1:1 drag)
+  
+  // Month swipe gestures (main month view)
+  const monthStartX = useRef<number | null>(null);
+  const monthStartY = useRef<number | null>(null);
+  const monthDX = useRef<number>(0);
+  const monthDY = useRef<number>(0);
+  const monthModeRef = useRef<'none' | 'horizontal'>('none');
+  const [monthStyle, setMonthStyle] = useState<React.CSSProperties>({});
+  const monthBlockClickRef = useRef(false);
+
+  const MONTH_SWIPE_THRESHOLD = 70;
+  const MONTH_H_CLAMP = 260;
+
+  useEffect(() => {
+    // reset visual state when the month changes
+    setMonthStyle({});
+    monthModeRef.current = 'none';
+    monthStartX.current = null;
+    monthStartY.current = null;
+    monthDX.current = 0;
+    monthDY.current = 0;
+    monthBlockClickRef.current = false;
+  }, [viewMonth, viewYear]);
+
+  const shiftMonthView = (delta: number) => {
+    const total = viewYear * 12 + viewMonth + delta;
+    const newYear = Math.floor(total / 12);
+    const newMonth = ((total % 12) + 12) % 12;
+    setViewYear(newYear);
+    setViewMonth(newMonth);
+  };
+
+  const animateMonthShift = (delta: number) => {
+    setMonthStyle({
+      transform: `translateX(${delta > 0 ? -22 : 22}px)`,
+      opacity: 0.55,
+      transition: `transform 140ms ${SNAP_EASE}, opacity 140ms ${SNAP_EASE}`,
+    });
+    setTimeout(() => {
+      shiftMonthView(delta);
+      setMonthStyle({
+        transform: `translateX(${delta > 0 ? 22 : -22}px)`,
+        opacity: 0.55,
+        transition: 'none',
+      });
+      requestAnimationFrame(() => {
+        setMonthStyle({
+          transform: 'translateX(0)',
+          opacity: 1,
+          transition: `transform 160ms ${SNAP_EASE}, opacity 160ms ${SNAP_EASE}`,
+        });
+      });
+    }, 140);
+  };
+
+  const onMonthTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
+    // If any modal is open, the overlay will eat touches anyway — but keep it safe.
+    if (showYear || selectedDate || showSearch || showAvail) return;
+
+    monthStartX.current = e.touches[0].clientX;
+    monthStartY.current = e.touches[0].clientY;
+    monthDX.current = 0;
+    monthDY.current = 0;
+    monthModeRef.current = 'none';
+    monthBlockClickRef.current = false;
+
+    setMonthStyle({ transition: 'none' });
+  };
+
+  const onMonthTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (monthStartX.current == null || monthStartY.current == null) return;
+
+    const dxRaw = e.touches[0].clientX - monthStartX.current;
+    const dyRaw = e.touches[0].clientY - monthStartY.current;
+
+    monthDX.current = dxRaw;
+    monthDY.current = dyRaw;
+
+    const absX = Math.abs(dxRaw);
+    const absY = Math.abs(dyRaw);
+
+    if (monthModeRef.current === 'none') {
+      // small slop so taps still open days
+      if (absX > 12 && absX > absY * 1.15) {
+        monthModeRef.current = 'horizontal';
+        monthBlockClickRef.current = true; // prevent day click behind the swipe
+      } else {
+        return;
+      }
+    }
+
+    if (monthModeRef.current === 'horizontal') {
+      const dx = clamp(dxRaw, -MONTH_H_CLAMP, MONTH_H_CLAMP);
+      setMonthStyle({ transform: `translateX(${dx}px)`, transition: 'none' });
+    }
+  };
+
+  const onMonthTouchEnd = () => {
+    if (monthStartX.current == null) return;
+
+    const dx = monthDX.current;
+
+    monthStartX.current = null;
+    monthStartY.current = null;
+    monthDX.current = 0;
+    monthDY.current = 0;
+
+    if (monthModeRef.current === 'horizontal') {
+      if (Math.abs(dx) >= MONTH_SWIPE_THRESHOLD) {
+        // User request: swipe RIGHT -> next month, swipe LEFT -> previous month
+        animateMonthShift(dx > 0 ? +1 : -1);
+      } else {
+        setMonthStyle({ transform: 'translateX(0)', transition: `transform 170ms ${SNAP_EASE}` });
+      }
+
+      // allow clicks again shortly after gesture settles
+      window.setTimeout(() => {
+        monthBlockClickRef.current = false;
+      }, 220);
+
+      monthModeRef.current = 'none';
+      return;
+    }
+
+    monthModeRef.current = 'none';
+    monthBlockClickRef.current = false;
+  };
+// Year modal gestures (1:1 drag)
   const yearStartX = useRef<number | null>(null);
   const yearStartY = useRef<number | null>(null);
   const yearDX = useRef<number>(0);
@@ -1054,7 +1181,11 @@ function BarberCalendarCore() {
         {/* Month grid */}
         <div
           className="mt-[clamp(10px,2.2vw,20px)] flex-1 grid grid-cols-7 gap-[clamp(4px,2vw,16px)] overflow-visible pb-[clamp(24px,3.2vw,48px)]"
-          style={{ fontFamily: BRAND.fontNumbers, gridAutoRows: '1fr' }}
+          style={{ fontFamily: BRAND.fontNumbers, gridAutoRows: '1fr', touchAction: 'pan-y', ...monthStyle }}
+          onTouchStart={onMonthTouchStart}
+          onTouchMove={onMonthTouchMove}
+          onTouchEnd={onMonthTouchEnd}
+          onTouchCancel={onMonthTouchEnd}
         >
           {matrix.flat().map((d) => {
             const inMonth = d.getMonth() === viewMonth;
@@ -1074,7 +1205,7 @@ function BarberCalendarCore() {
             const barFillWidth = `${Math.round(ratio * 100)}%`;
 
             return (
-              <button key={key} onClick={() => openDay(d)} className={cls}>
+              <button key={key} onClick={() => { if (monthBlockClickRef.current) return; openDay(d); }} className={cls}>
                 <div className="flex flex-col items-center justify-center gap-2 w-full">
                   <span className={`select-none text-[clamp(17px,3.5vw,32px)] ${isToday ? 'font-extrabold' : ''}`} style={{ fontFamily: BRAND.fontNumbers }}>
                     {inMonth && full ? 'X' : num}
