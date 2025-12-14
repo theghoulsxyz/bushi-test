@@ -979,8 +979,8 @@ function BarberCalendarCore() {
 
     if (monthModeRef.current === 'horizontal') {
       if (Math.abs(dx) >= MONTH_SWIPE_THRESHOLD) {
-        // User request: swipe RIGHT -> next month, swipe LEFT -> previous month
-        animateMonthShift(dx > 0 ? +1 : -1);
+        // Swipe LEFT -> next month, Swipe RIGHT -> previous month
+        animateMonthShift(dx < 0 ? +1 : -1);
       } else {
         setMonthStyle({ transform: 'translateX(0)', transition: `transform 170ms ${SNAP_EASE}` });
       }
