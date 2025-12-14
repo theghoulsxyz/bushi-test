@@ -435,12 +435,17 @@ function BarberCalendarCore() {
 
   const stopEditing = useCallback(() => {
     editingRef.current = false;
+
+    // If a remote sync arrived while typing, don't apply that stale snapshot on blur
+    // (it can wipe the just-typed value visually). Instead, discard it and re-sync
+    // shortly after blur so the server stays the source of truth.
     if (pendingRemoteRef.current) {
-      const remote = pendingRemoteRef.current;
       pendingRemoteRef.current = null;
-      setStore(remote);
+      window.setTimeout(() => {
+        syncFromRemote();
+      }, 420);
     }
-  }, []);
+  }, [syncFromRemote]);
 
   useEffect(() => {
     if (typeof document === 'undefined') return;
