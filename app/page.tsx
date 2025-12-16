@@ -414,7 +414,7 @@ function BarberCalendarCore() {
 
     (async () => {
       await syncFromRemote();
-      interval = window.setInterval(syncFromRemote, 7000);
+      interval = window.setInterval(syncFromRemote, 60000);
     })();
 
     const handleVisibility = () => {
@@ -427,25 +427,36 @@ function BarberCalendarCore() {
       document.removeEventListener('visibilitychange', handleVisibility);
       if (interval != null) window.clearInterval(interval);
     };
-  }, [syncFromRemote]);
+  }, [syncFromRemote, isSlotInputFocused]);
+
+  const isSlotInputFocused = useCallback(() => {
+    if (typeof document === 'undefined') return false;
+    const el = document.activeElement as HTMLElement | null;
+    if (!el) return false;
+    const id = (el as any).id as string | undefined;
+    return typeof id === 'string' && id.startsWith('slot_');
+  }, []);
 
   const startEditing = useCallback(() => {
     editingRef.current = true;
   }, []);
 
   const stopEditing = useCallback(() => {
-    editingRef.current = false;
-
-    // If a remote sync arrived while typing, don't apply that stale snapshot on blur
-    // (it can wipe the just-typed value visually). Instead, discard it and re-sync
-    // shortly after blur so the server stays the source of truth.
+    // If a remote sync arrived while typing, don't apply that stale snapshot later.
+    // Discard it and re-sync shortly after blur so the server stays the source of truth.
     if (pendingRemoteRef.current) {
       pendingRemoteRef.current = null;
       window.setTimeout(() => {
         syncFromRemote();
-      }, 420);
+      }, 900);
     }
-  }, [syncFromRemote]);
+
+    // IMPORTANT: when you click from one slot input to another, blur fires first.
+    // Don’t mark "not editing" until we confirm no other slot input is focused.
+    window.setTimeout(() => {
+      editingRef.current = isSlotInputFocused();
+    }, 0);
+  }, [syncFromRemote, isSlotInputFocused]);
 
   useEffect(() => {
     if (typeof document === 'undefined') return;
