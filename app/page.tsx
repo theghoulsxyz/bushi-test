@@ -416,7 +416,7 @@ function BarberCalendarCore() {
     return typeof id === 'string' && id.startsWith('slot_');
   }, []);
 
-useEffect(() => {
+  useEffect(() => {
     cancelledSyncRef.current = false;
     let interval: number | null = null;
 
@@ -437,14 +437,11 @@ useEffect(() => {
     };
   }, [syncFromRemote, isSlotInputFocused]);
 
-  
   const startEditing = useCallback(() => {
     editingRef.current = true;
   }, []);
 
   const stopEditing = useCallback(() => {
-    // If a remote sync arrived while typing, don't apply that stale snapshot later.
-    // Discard it and re-sync shortly after blur so the server stays the source of truth.
     if (pendingRemoteRef.current) {
       pendingRemoteRef.current = null;
       window.setTimeout(() => {
@@ -452,8 +449,6 @@ useEffect(() => {
       }, 900);
     }
 
-    // IMPORTANT: when you click from one slot input to another, blur fires first.
-    // Don’t mark "not editing" until we confirm no other slot input is focused.
     window.setTimeout(() => {
       editingRef.current = isSlotInputFocused();
     }, 0);
@@ -544,10 +539,17 @@ useEffect(() => {
     typeof window !== 'undefined' &&
     (window.matchMedia ? window.matchMedia('(min-width: 768px)').matches : window.innerWidth >= 768);
 
+  // ✅ NEW: iPhone scroll-vs-swipe intent lock
+  const verticalIntentLockRef = useRef(false);
+  const H_INTENT_SLOP = 20;     // need a bigger horizontal move before we even consider swipe
+  const V_INTENT_SLOP = 10;     // small vertical move immediately counts as scroll intent
+  const H_INTENT_RATIO = 1.65;  // horizontal must dominate vertical by this ratio
+
   useEffect(() => {
     setSwipeStyle({});
     setPanelStyle({});
     gestureModeRef.current = 'none';
+    verticalIntentLockRef.current = false;
     setArmedRemove(null);
     clearArmedTimeout();
   }, [selectedDate, clearArmedTimeout]);
@@ -600,6 +602,7 @@ useEffect(() => {
       setPanelStyle({});
       setSwipeStyle({});
       gestureModeRef.current = 'none';
+      verticalIntentLockRef.current = false;
       setPendingFocus(null);
     }, 170);
   };
@@ -610,6 +613,8 @@ useEffect(() => {
     swipeDX.current = 0;
     swipeDY.current = 0;
     gestureModeRef.current = 'none';
+    verticalIntentLockRef.current = false;
+
     setSwipeStyle({ transition: 'none' });
     setPanelStyle({ transition: 'none', transform: 'translateY(0)', opacity: 1 });
   };
@@ -626,11 +631,26 @@ useEffect(() => {
     const absX = Math.abs(dxRaw);
     const absY = Math.abs(dyRaw);
 
+    // ✅ If we already detected scroll intent, never start horizontal swipe.
+    if (verticalIntentLockRef.current) return;
+
     if (gestureModeRef.current === 'none') {
-      if (isTabletOrBigger() && dyRaw > 0 && absY > absX * 1.2) gestureModeRef.current = 'vertical';
-      else if (absX > absY) gestureModeRef.current = 'horizontal';
+      // If it looks like a scroll early, lock to vertical and let Safari scroll.
+      if (absY >= V_INTENT_SLOP && absY > absX * 1.05) {
+        verticalIntentLockRef.current = true;
+        return;
+      }
+
+      // Only start horizontal swipe if it's clearly horizontal (and big enough).
+      if (absX >= H_INTENT_SLOP && absX > absY * H_INTENT_RATIO) {
+        gestureModeRef.current = 'horizontal';
+      } else {
+        // still undecided -> do nothing, let scroll work
+        return;
+      }
     }
 
+    // Tablet-only vertical close stays the same
     if (gestureModeRef.current === 'vertical') {
       const dy = clamp(Math.max(dyRaw, 0), 0, V_DRAG_CLAMP);
       const opacity = Math.max(0.75, 1 - dy / 640);
@@ -655,6 +675,15 @@ useEffect(() => {
     swipeStartY.current = null;
     swipeDX.current = 0;
     swipeDY.current = 0;
+
+    // ✅ If it was a scroll, don't snap anything, just reset.
+    if (verticalIntentLockRef.current) {
+      verticalIntentLockRef.current = false;
+      gestureModeRef.current = 'none';
+      setSwipeStyle({});
+      setPanelStyle({});
+      return;
+    }
 
     if (gestureModeRef.current === 'vertical') {
       if (isTabletOrBigger() && dy >= VERTICAL_CLOSE_THRESHOLD) {
@@ -682,7 +711,11 @@ useEffect(() => {
     }
 
     setSwipeStyle({ transform: 'translateX(0)', transition: `transform 160ms ${SNAP_EASE}` });
-    setPanelStyle({ transform: 'translateY(0)', opacity: 1, transition: `transform 160ms ${SNAP_EASE}, opacity 160ms ${SNAP_EASE}` });
+    setPanelStyle({
+      transform: 'translateY(0)',
+      opacity: 1,
+      transition: `transform 160ms ${SNAP_EASE}, opacity 160ms ${SNAP_EASE}`,
+    });
     setTimeout(() => setPanelStyle({}), 160);
   };
 
@@ -771,7 +804,9 @@ useEffect(() => {
     const t = window.setTimeout(() => {
       const el = document.getElementById(id) as HTMLInputElement | null;
       if (el) {
-        try { el.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch {}
+        try {
+          el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        } catch {}
         el.focus();
         el.select();
       }
@@ -887,7 +922,6 @@ useEffect(() => {
     'w-14 md:w-16 h-10 md:h-11 rounded-2xl border border-neutral-700/70 bg-neutral-900/65 hover:bg-neutral-800/75 transition grid place-items-center shadow-[0_14px_40px_rgba(0,0,0,0.75)]';
   const weekendEmojiClass = 'text-[18px] md:text-[20px] leading-none';
 
-  
   // Month swipe gestures (main month view)
   const monthStartX = useRef<number | null>(null);
   const monthStartY = useRef<number | null>(null);
@@ -1014,7 +1048,8 @@ useEffect(() => {
     monthModeRef.current = 'none';
     monthBlockClickRef.current = false;
   };
-// Year modal gestures (1:1 drag)
+
+  // Year modal gestures (1:1 drag)
   const yearStartX = useRef<number | null>(null);
   const yearStartY = useRef<number | null>(null);
   const yearDX = useRef<number>(0);
@@ -1179,11 +1214,11 @@ useEffect(() => {
               <div key={d} className="flex flex-col items-center gap-2">
                 {isSat ? (
                   <button onClick={() => setShowAvail(true)} className={weekendBtnClass} aria-label="Свободни часове" title="Свободни часове">
-                    <span className={weekendEmojiClass}>⏱️</span>
+                    <span className="text-[18px] md:text-[20px] leading-none">⏱️</span>
                   </button>
                 ) : isSun ? (
                   <button onClick={() => setShowSearch(true)} className={weekendBtnClass} aria-label="Търсене" title="Търсене">
-                    <span className={weekendEmojiClass}>🔍</span>
+                    <span className="text-[18px] md:text-[20px] leading-none">🔍</span>
                   </button>
                 ) : (
                   <div className="h-10 md:h-11" aria-hidden="true" />
@@ -1472,7 +1507,14 @@ useEffect(() => {
               </div>
 
               {/* Slots */}
-              <div className="mt-4 flex-1 overflow-y-auto md:overflow-visible" onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd} style={swipeStyle}>
+              <div
+                className="mt-4 flex-1 overflow-y-auto md:overflow-visible"
+                onTouchStart={onTouchStart}
+                onTouchMove={onTouchMove}
+                onTouchEnd={onTouchEnd}
+                onTouchCancel={onTouchEnd}
+                style={{ ...swipeStyle, touchAction: 'pan-y' }}  // ✅ helps scrolling feel “owned” by vertical pan
+              >
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5" style={{ gridAutoRows: 'minmax(32px,1fr)' }}>
                   {DAY_SLOTS.map((time) => {
                     const value = (selectedDayMap as Record<string, string>)[time] || '';
