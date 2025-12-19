@@ -650,18 +650,13 @@ function BarberCalendarCore() {
   };
 
   const onTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
-    // If user starts gesture on an input/textarea, do NOT hijack (let iOS scroll + caret work).
-    if (isTypingTarget(e.target as any)) return;
-
+    // Start a gesture on the day editor scroll area.
+    // We DO NOT move/drag the UI with the finger (no translateX during hold).
     swipeStartX.current = e.touches[0].clientX;
     swipeStartY.current = e.touches[0].clientY;
     swipeDX.current = 0;
     swipeDY.current = 0;
-
-    // Lock mode only after a clear intent (prevents "shake" / accidental diagonal grabs)
     gestureModeRef.current = 'none';
-
-    setSwipeStyle({ transition: 'none', willChange: 'transform' });
   };
 
   const onTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
@@ -676,27 +671,22 @@ function BarberCalendarCore() {
     const absX = Math.abs(dxRaw);
     const absY = Math.abs(dyRaw);
 
-    // Decide gesture direction only after a deadzone, and require strong horizontal intent
+    // Decide intent once: horizontal swipe vs vertical scroll.
+    // Keep scroll smooth: only lock when we're confident it's a swipe.
     if (gestureModeRef.current === 'none') {
-      const DEADZONE = 14; // pixels
-      if (absX < DEADZONE && absY < DEADZONE) return;
-
-      // horizontal swipe only if clearly horizontal (so vertical scroll wins by default)
-      if (absX > absY * 1.6 && absX > 18) {
+      if (absX > 18 && absX > absY * 1.25) {
         gestureModeRef.current = 'horizontal';
+      } else if (absY > 18 && absY > absX * 1.25) {
+        gestureModeRef.current = 'vertical';
       } else {
-        // anything else = treat as vertical scroll (do nothing, let browser scroll)
-        gestureModeRef.current = 'none';
         return;
       }
     }
 
+    // If user is swiping horizontally, stop the scroll from hijacking it.
     if (gestureModeRef.current === 'horizontal') {
-      // We handle horizontal swipe ourselves -> prevent default to avoid iOS scroll-capture weirdness
+      // Note: React uses non-passive listeners, so preventDefault works here.
       e.preventDefault();
-
-      const dx = clamp(dxRaw, -H_DRAG_CLAMP, H_DRAG_CLAMP);
-      setSwipeStyle({ transform: `translateX(${dx}px)`, transition: 'none', willChange: 'transform' });
     }
   };
 
@@ -713,16 +703,12 @@ function BarberCalendarCore() {
     if (gestureModeRef.current === 'horizontal') {
       if (Math.abs(dx) >= SWIPE_THRESHOLD) {
         // Swipe LEFT -> next day, Swipe RIGHT -> previous day
-        animateShift(dx < 0 ? +1 : -1);
-      } else {
-        setSwipeStyle({ transform: 'translateX(0)', transition: `transform 180ms ${SNAP_EASE}` });
+        animateShift(dx > 0 ? -1 : 1);
       }
       gestureModeRef.current = 'none';
       return;
     }
 
-    // reset (no-op)
-    setSwipeStyle({ transform: 'translateX(0)', transition: `transform 180ms ${SNAP_EASE}` });
     gestureModeRef.current = 'none';
   };
 
