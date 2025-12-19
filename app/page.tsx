@@ -673,9 +673,17 @@ useEffect(() => {
 
   const onDocMove = (e: TouchEvent) => {
     if (mode !== 'horizontal' || startX == null || startY == null) return;
+
     // Stop iOS scroll only while horizontally swiping
     e.preventDefault();
-    const clamped = clamp(dx, -H_DRAG_CLAMP, H_DRAG_CLAMP);
+
+    // Compute directly from the current finger position (more reliable on iOS)
+    const dxRaw = e.touches[0].clientX - startX;
+    const dyRaw = e.touches[0].clientY - startY;
+    dx = dxRaw;
+    dy = dyRaw;
+
+    const clamped = clamp(dxRaw, -H_DRAG_CLAMP, H_DRAG_CLAMP);
     setSwipeStyle({ transform: `translateX(${clamped}px)`, transition: 'none' });
   };
 
