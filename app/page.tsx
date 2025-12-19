@@ -575,6 +575,18 @@ function BarberCalendarCore() {
   const SWIPE_INTENT_LOCK = 1.25; // absX must beat absY by this factor
   const SWIPE_INTENT_MIN = 22; // px
 
+
+  // Helper: change selected day (used by swipe). Also keeps month/year in sync.
+  const shiftSelectedDay = useCallback((delta: number) => {
+    setSelectedDate((prev) => {
+      if (!prev) return prev;
+      const next = addDays(prev, delta);
+      // If swipe crosses month/year, keep the main view in sync
+      setViewYear(next.getFullYear());
+      setViewMonth(next.getMonth());
+      return next;
+    });
+  }, []);
   const flashSwipe = () => {
     setDaySwipeFlash(true);
     window.setTimeout(() => setDaySwipeFlash(false), 140);
