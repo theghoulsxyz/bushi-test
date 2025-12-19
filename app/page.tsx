@@ -1,5 +1,5 @@
 'use client';
-// Bushi Admin â€” Month grid + Day editor + Year view + Search + Closest available (Supabase sync, SAFE PATCH writes)
+// Bushi Admin — Month grid + Day editor + Year view + Search + Closest available (Supabase sync, SAFE PATCH writes)
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
@@ -91,31 +91,31 @@ const slotInputId = (dayISO: string, time: string) =>
 // =============================================================================
 // Weekdays / Months (Bulgarian)
 // =============================================================================
-const WEEKDAYS_SHORT = ['ÐŸÐ¾Ð½', 'Ð’Ñ‚Ð¾', 'Ð¡Ñ€Ñ', 'Ð§ÐµÑ‚', 'ÐŸÐµÑ‚', 'Ð¡ÑŠÐ±', 'ÐÐµÐ´'];
+const WEEKDAYS_SHORT = ['Пон', 'Вто', 'Сря', 'Чет', 'Пет', 'Съб', 'Нед'];
 
 const WEEKDAYS_FULL = [
-  'ÐŸÐ¾Ð½ÐµÐ´ÐµÐ»Ð½Ð¸Ðº',
-  'Ð’Ñ‚Ð¾Ñ€Ð½Ð¸Ðº',
-  'Ð¡Ñ€ÑÐ´Ð°',
-  'Ð§ÐµÑ‚Ð²ÑŠÑ€Ñ‚ÑŠÐº',
-  'ÐŸÐµÑ‚ÑŠÐº',
-  'Ð¡ÑŠÐ±Ð¾Ñ‚Ð°',
-  'ÐÐµÐ´ÐµÐ»Ñ',
+  'Понеделник',
+  'Вторник',
+  'Сряда',
+  'Четвъртък',
+  'Петък',
+  'Събота',
+  'Неделя',
 ];
 
 const MONTHS = [
-  'Ð¯Ð½ÑƒÐ°Ñ€Ð¸',
-  'Ð¤ÐµÐ²Ñ€ÑƒÐ°Ñ€Ð¸',
-  'ÐœÐ°Ñ€Ñ‚',
-  'ÐÐ¿Ñ€Ð¸Ð»',
-  'ÐœÐ°Ð¹',
-  'Ð®Ð½Ð¸',
-  'Ð®Ð»Ð¸',
-  'ÐÐ²Ð³ÑƒÑÑ‚',
-  'Ð¡ÐµÐ¿Ñ‚ÐµÐ¼Ð²Ñ€Ð¸',
-  'ÐžÐºÑ‚Ð¾Ð¼Ð²Ñ€Ð¸',
-  'ÐÐ¾ÐµÐ¼Ð²Ñ€Ð¸',
-  'Ð”ÐµÐºÐµÐ¼Ð²Ñ€Ð¸',
+  'Януари',
+  'Февруари',
+  'Март',
+  'Април',
+  'Май',
+  'Юни',
+  'Юли',
+  'Август',
+  'Септември',
+  'Октомври',
+  'Ноември',
+  'Декември',
 ];
 
 // =============================================================================
@@ -231,7 +231,7 @@ type SlotRowProps = {
   onArm: (timeKey: string) => void;
   onConfirmRemove: (day: string, time: string) => void;
 
-  // âœ… iPhone keyboard safety: ensure focused input is visible
+  // ✅ iPhone keyboard safety: ensure focused input is visible
   onRevealFocus: (day: string, time: string, inputEl: HTMLInputElement) => void;
 };
 
@@ -277,7 +277,7 @@ const SlotRow = React.memo(
             onFocus={(e) => {
               e.currentTarget.dataset.orig = e.currentTarget.value;
               onStartEditing();
-              // âœ… keep it visible above the iPhone keyboard
+              // ✅ keep it visible above the iPhone keyboard
               onRevealFocus(dayISO, time, e.currentTarget);
             }}
             onKeyDown={(e) => {
@@ -313,8 +313,8 @@ const SlotRow = React.memo(
                   ? 'bg-red-900/30 border-red-600/70'
                   : 'bg-neutral-900/60 hover:bg-neutral-800/70 border-neutral-700/50'
               }`}
-              aria-label={isArmed ? 'ÐŸÐ¾Ñ‚Ð²ÑŠÑ€Ð´Ð¸' : 'ÐŸÑ€ÐµÐ¼Ð°Ñ…Ð½Ð¸'}
-              title={isArmed ? 'ÐŸÐ¾Ñ‚Ð²ÑŠÑ€Ð´Ð¸' : 'ÐŸÑ€ÐµÐ¼Ð°Ñ…Ð½Ð¸'}
+              aria-label={isArmed ? 'Потвърди' : 'Премахни'}
+              title={isArmed ? 'Потвърди' : 'Премахни'}
             >
               <img
                 src={isArmed ? '/tick-green.png' : '/razor.png'}
@@ -375,7 +375,7 @@ function BarberCalendarCore() {
   const [store, setStore] = useState<Store>({});
   const [remoteReady, setRemoteReady] = useState(false);
 
-  // âœ… iPhone keyboard: bottom inset so you can see bottom inputs while typing
+  // ✅ iPhone keyboard: bottom inset so you can see bottom inputs while typing
   const [keyboardInset, setKeyboardInset] = useState(0);
 
   useEffect(() => {
@@ -405,7 +405,7 @@ function BarberCalendarCore() {
   const cancelledSyncRef = useRef(false);
   const syncingRef = useRef(false);
 
-  // âœ… iOS click-through guard: swallow the next click after closing overlay modals
+  // ✅ iOS click-through guard: swallow the next click after closing overlay modals
   const swallowNextClickRef = useRef(false);
   const swallowNextClick = useCallback(() => {
     swallowNextClickRef.current = true;
@@ -481,13 +481,13 @@ function BarberCalendarCore() {
     }
 
     // IMPORTANT: when you click from one slot input to another, blur fires first.
-    // Donâ€™t mark "not editing" until we confirm no other slot input is focused.
+    // Don’t mark "not editing" until we confirm no other slot input is focused.
     window.setTimeout(() => {
       editingRef.current = isSlotInputFocused();
     }, 0);
   }, [syncFromRemote, isSlotInputFocused]);
 
-  // âœ… when focusing an input near the bottom, iOS keyboard can cover it â€” reveal it
+  // ✅ when focusing an input near the bottom, iOS keyboard can cover it — reveal it
   const revealFocus = useCallback((day: string, time: string, inputEl: HTMLInputElement) => {
     window.setTimeout(() => {
       try { inputEl.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch {}
@@ -574,7 +574,7 @@ function BarberCalendarCore() {
   const [panelStyle, setPanelStyle] = useState<React.CSSProperties>({});
   const gestureModeRef = useRef<'none' | 'horizontal' | 'vertical'>('none');
 
-  // âœ… iPhone scroll vs swipe tuning:
+  // ✅ iPhone scroll vs swipe tuning:
   // - Make horizontal swipe less sensitive so vertical scrolling wins.
   const SWIPE_THRESHOLD = 72; // was 52
   const VERTICAL_CLOSE_THRESHOLD = 95;
@@ -636,126 +636,6 @@ function BarberCalendarCore() {
       });
     }, 140);
   };
-
-
-// =============================================================================
-// iPhone FIX (scroll + swipe-anywhere):
-// We attach PASSIVE touch listeners to the scroll container so iOS keeps native scrolling.
-// Only when we confidently lock into a horizontal gesture, we attach a temporary
-// document-level touchmove listener with {passive:false} to preventDefault() and drive the swipe.
-// =============================================================================
-useEffect(() => {
-  if (!selectedDate) return;
-  const el = slotsScrollRef.current;
-  if (!el) return;
-
-  let startX: number | null = null;
-  let startY: number | null = null;
-  let dx = 0;
-  let dy = 0;
-  let mode: 'none' | 'horizontal' | 'vertical' = 'none';
-  let docMoveAttached = false;
-
-  const isInteractive = (t: EventTarget | null) => {
-    const node = t as HTMLElement | null;
-    if (!node) return false;
-    const tag = node.tagName?.toLowerCase?.();
-    if (tag === 'input' || tag === 'textarea' || tag === 'select' || tag === 'button') return true;
-    if (node.closest?.('input,textarea,select,button')) return true;
-    return false;
-  };
-
-  const detachDocMove = () => {
-    if (!docMoveAttached) return;
-    document.removeEventListener('touchmove', onDocMove as any);
-    docMoveAttached = false;
-  };
-
-  const onDocMove = (e: TouchEvent) => {
-    if (mode !== 'horizontal' || startX == null || startY == null) return;
-    // Stop iOS scroll only while horizontally swiping
-    e.preventDefault();
-    const clamped = clamp(dx, -H_DRAG_CLAMP, H_DRAG_CLAMP);
-    setSwipeStyle({ transform: `translateX(${clamped}px)`, transition: 'none' });
-  };
-
-  const onStart = (e: TouchEvent) => {
-    if (e.touches.length !== 1) return;
-    if (isInteractive(e.target)) return;
-
-    startX = e.touches[0].clientX;
-    startY = e.touches[0].clientY;
-    dx = 0;
-    dy = 0;
-    mode = 'none';
-    detachDocMove();
-  };
-
-  const onMovePassive = (e: TouchEvent) => {
-    if (startX == null || startY == null) return;
-
-    const x = e.touches[0].clientX;
-    const y = e.touches[0].clientY;
-    dx = x - startX;
-    dy = y - startY;
-
-    const ax = Math.abs(dx);
-    const ay = Math.abs(dy);
-
-    if (mode === 'none') {
-      // Let vertical scrolling win unless it's clearly horizontal
-      if (ay > 10 && ay > ax) {
-        mode = 'vertical';
-        return;
-      }
-      // Stricter horizontal lock for iPhone Safari
-      if (ax > 22 && ax > ay * 1.45) {
-        mode = 'horizontal';
-        document.addEventListener('touchmove', onDocMove as any, { passive: false });
-        docMoveAttached = true;
-        return;
-      }
-      return;
-    }
-
-    // vertical: do nothing, native scroll continues
-    // horizontal: doc handler runs
-  };
-
-  const finish = () => {
-    if (startX == null) return;
-
-    if (mode === 'horizontal') {
-      if (Math.abs(dx) >= SWIPE_THRESHOLD) {
-        // swipe right => previous day, swipe left => next day
-        animateShift(dx > 0 ? -1 : 1);
-      } else {
-        setSwipeStyle({ transform: 'translateX(0)', transition: `transform 170ms ${SNAP_EASE}` });
-      }
-    }
-
-    startX = null;
-    startY = null;
-    dx = 0;
-    dy = 0;
-    mode = 'none';
-    detachDocMove();
-  };
-
-  el.addEventListener('touchstart', onStart, { passive: true });
-  el.addEventListener('touchmove', onMovePassive, { passive: true });
-  el.addEventListener('touchend', finish, { passive: true });
-  el.addEventListener('touchcancel', finish, { passive: true });
-
-  return () => {
-    el.removeEventListener('touchstart', onStart as any);
-    el.removeEventListener('touchmove', onMovePassive as any);
-    el.removeEventListener('touchend', finish as any);
-    el.removeEventListener('touchcancel', finish as any);
-    detachDocMove();
-  };
-}, [selectedDate, animateShift]);
-
 
   const animateCloseDown = () => {
     setPanelStyle({
@@ -1124,7 +1004,7 @@ useEffect(() => {
   };
 
   const onMonthTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
-    // If any modal is open, the overlay will eat touches anyway â€” but keep it safe.
+    // If any modal is open, the overlay will eat touches anyway — but keep it safe.
     if (showYear || selectedDate || showSearch || showAvail) return;
 
     monthStartX.current = e.touches[0].clientX;
@@ -1337,7 +1217,7 @@ useEffect(() => {
               setViewMonth(now.getMonth());
               syncFromRemote();
             }}
-            title={remoteReady ? 'Refresh' : 'Loadingâ€¦'}
+            title={remoteReady ? 'Refresh' : 'Loading…'}
           />
 
           {/* Month title (no wrap) */}
@@ -1360,12 +1240,12 @@ useEffect(() => {
             return (
               <div key={d} className="flex flex-col items-center gap-2">
                 {isSat ? (
-                  <button onClick={() => setShowAvail(true)} className={weekendBtnClass} aria-label="Ð¡Ð²Ð¾Ð±Ð¾Ð´Ð½Ð¸ Ñ‡Ð°ÑÐ¾Ð²Ðµ" title="Ð¡Ð²Ð¾Ð±Ð¾Ð´Ð½Ð¸ Ñ‡Ð°ÑÐ¾Ð²Ðµ">
-                    <span className={weekendEmojiClass}>â±ï¸</span>
+                  <button onClick={() => setShowAvail(true)} className={weekendBtnClass} aria-label="Свободни часове" title="Свободни часове">
+                    <span className={weekendEmojiClass}>⏱️</span>
                   </button>
                 ) : isSun ? (
-                  <button onClick={() => setShowSearch(true)} className={weekendBtnClass} aria-label="Ð¢ÑŠÑ€ÑÐµÐ½Ðµ" title="Ð¢ÑŠÑ€ÑÐµÐ½Ðµ">
-                    <span className={weekendEmojiClass}>ðŸ”</span>
+                  <button onClick={() => setShowSearch(true)} className={weekendBtnClass} aria-label="Търсене" title="Търсене">
+                    <span className={weekendEmojiClass}>🔍</span>
                   </button>
                 ) : (
                   <div className="h-10 md:h-11" aria-hidden="true" />
@@ -1462,14 +1342,14 @@ useEffect(() => {
           >
             <div className="flex items-center justify-between gap-3">
               <div className="text-[clamp(22px,4.2vw,32px)] leading-none select-none" style={{ fontFamily: BRAND.fontTitle }}>
-                ÐÐ°Ð¹-Ð±Ð»Ð¸Ð·ÐºÐ¸ ÑÐ²Ð¾Ð±Ð¾Ð´Ð½Ð¸ Ñ‡Ð°ÑÐ¾Ð²Ðµ
+                Най-близки свободни часове
               </div>
 
               <button
                 onClick={() => syncFromRemote()}
                 className="rounded-2xl border border-neutral-700/70 bg-neutral-900/60 hover:bg-neutral-800/70 transition px-3 py-2 text-xs tracking-[0.18em] uppercase"
                 style={{ fontFamily: BRAND.fontBody }}
-                title="ÐžÐ±Ð½Ð¾Ð²Ð¸"
+                title="Обнови"
               >
                 Refresh
               </button>
@@ -1478,7 +1358,7 @@ useEffect(() => {
             <div className="mt-4 max-h-[62vh] overflow-y-auto pr-1">
               {closestAvail.length === 0 ? (
                 <div className="text-neutral-400 text-sm" style={{ fontFamily: BRAND.fontBody }}>
-                  ÐÑÐ¼Ð° ÑÐ²Ð¾Ð±Ð¾Ð´Ð½Ð¸ Ñ‡Ð°ÑÐ¾Ð²Ðµ Ð½Ð°Ð¿Ñ€ÐµÐ´ (Ð² Ñ€Ð°Ð¼ÐºÐ¸Ñ‚Ðµ Ð½Ð° ÑÐ»ÐµÐ´Ð²Ð°Ñ‰Ð¸Ñ‚Ðµ Ð¼ÐµÑÐµÑ†Ð¸).
+                  Няма свободни часове напред (в рамките на следващите месеци).
                 </div>
               ) : (
                 <div className="space-y-3">
@@ -1508,7 +1388,7 @@ useEffect(() => {
             </div>
 
             <div className="mt-4 text-[11px] text-neutral-500" style={{ fontFamily: BRAND.fontBody }}>
-              *ÐŸÐ¾ÐºÐ°Ð·Ð²Ð° Ð½Ð°Ð¹-Ñ€Ð°Ð½Ð½Ð¸Ñ‚Ðµ ÑÐ²Ð¾Ð±Ð¾Ð´Ð½Ð¸ ÑÐ»Ð¾Ñ‚Ð¾Ð²Ðµ Ð¾Ñ‚ Ð´Ð½ÐµÑ Ð½Ð°Ñ‚Ð°Ñ‚ÑŠÐº.
+              *Показва най-ранните свободни слотове от днес нататък.
             </div>
           </div>
         </div>
@@ -1535,7 +1415,7 @@ useEffect(() => {
           >
             <div className="flex items-center justify-between gap-3">
               <div className="text-[clamp(22px,4.2vw,32px)] leading-none select-none" style={{ fontFamily: BRAND.fontTitle }}>
-                Ð¢ÑŠÑ€ÑÐµÐ½Ðµ Ð½Ð° ÐºÐ»Ð¸ÐµÐ½Ñ‚
+                Търсене на клиент
               </div>
             </div>
 
@@ -1544,7 +1424,7 @@ useEffect(() => {
                 ref={searchInputRef}
                 value={searchQ}
                 onChange={(e) => setSearchQ(e.target.value)}
-                placeholder="Ð’ÑŠÐ²ÐµÐ´Ð¸ Ð¸Ð¼Ðµâ€¦"
+                placeholder="Въведи име…"
                 className="w-full rounded-2xl bg-neutral-900/70 border border-neutral-700/70 focus:border-white/70 outline-none px-4 py-3 text-base"
                 style={{ fontFamily: BRAND.fontBody }}
               />
@@ -1553,11 +1433,11 @@ useEffect(() => {
             <div className="mt-4 max-h-[58vh] overflow-y-auto pr-1">
               {searchQ.trim().length === 0 ? (
                 <div className="text-neutral-400 text-sm" style={{ fontFamily: BRAND.fontBody }}>
-                  Ð—Ð°Ð¿Ð¾Ñ‡Ð½Ð¸ Ð´Ð° Ð¿Ð¸ÑˆÐµÑˆ, Ð·Ð° Ð´Ð° Ñ‚ÑŠÑ€ÑÐ¸Ñˆ.
+                  Започни да пишеш, за да търсиш.
                 </div>
               ) : hits.length === 0 ? (
                 <div className="text-neutral-400 text-sm" style={{ fontFamily: BRAND.fontBody }}>
-                  ÐÑÐ¼Ð° Ñ€ÐµÐ·ÑƒÐ»Ñ‚Ð°Ñ‚Ð¸.
+                  Няма резултати.
                 </div>
               ) : (
                 <div className="space-y-3">
@@ -1655,15 +1535,17 @@ useEffect(() => {
 
               {/* Slots */}
               <div
-  ref={slotsScrollRef}
-  className="mt-4 flex-1 overflow-y-auto md:overflow-visible"
-  style={{
-    ...swipeStyle,
-    touchAction: 'pan-y',
-    WebkitOverflowScrolling: 'touch',
-    paddingBottom: keyboardInset ? `${keyboardInset}px` : undefined,
-  }}
->
+                className="mt-4 flex-1 overflow-y-auto md:overflow-visible"
+                onTouchStart={onTouchStart}
+                onTouchMove={onTouchMove}
+                onTouchEnd={onTouchEnd}
+                onTouchCancel={onTouchEnd}
+                style={{
+                  ...swipeStyle,
+                  touchAction: 'pan-y',
+                  paddingBottom: keyboardInset ? `${keyboardInset}px` : undefined,
+                }}
+              >
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5" style={{ gridAutoRows: 'minmax(32px,1fr)' }}>
                   {DAY_SLOTS.map((time) => {
                     const value = (selectedDayMap as Record<string, string>)[time] || '';
@@ -1695,7 +1577,7 @@ useEffect(() => {
 
                 {!remoteReady && (
                   <div className="mt-3 text-xs text-neutral-500 text-center" style={{ fontFamily: BRAND.fontBody }}>
-                    Ð—Ð°Ñ€ÐµÐ¶Ð´Ð°Ð½Ðµ Ð¾Ñ‚ ÑÑŠÑ€Ð²ÑŠÑ€Ð°â€¦ (Ð·Ð°Ð¿Ð¸ÑÑŠÑ‚ Ðµ Ð·Ð°ÐºÐ»ÑŽÑ‡ÐµÐ½)
+                    Зареждане от сървъра… (записът е заключен)
                   </div>
                 )}
               </div>
@@ -1767,7 +1649,7 @@ export default function BarbershopAdminPanel() {
                 maxLength={6}
                 className="w-full bg-transparent border-none outline-none text-center text-lg tracking-[0.35em] placeholder:text-neutral-600"
                 style={{ fontFamily: BRAND.fontBody }}
-                placeholder="â€¢â€¢â€¢â€¢"
+                placeholder="••••"
               />
             </div>
 
