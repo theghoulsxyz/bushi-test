@@ -363,6 +363,9 @@ function BarberCalendarCore() {
   const [showYear, setShowYear] = useState(false);
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
 
+  // Panel style (kept for compatibility with older builds)
+  const panelStyle: React.CSSProperties = {};
+
   const [showSearch, setShowSearch] = useState(false);
   const [searchQ, setSearchQ] = useState('');
   const searchInputRef = useRef<HTMLInputElement | null>(null);
