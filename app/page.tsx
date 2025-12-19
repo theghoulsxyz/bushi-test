@@ -61,6 +61,8 @@ const addDays = (d: Date, delta: number) =>
 const clamp = (v: number, min: number, max: number) =>
   Math.max(min, Math.min(max, v));
 
+const SNAP_EASE = 'cubic-bezier(0.25, 0.9, 0.25, 1)';
+
 function monthMatrix(year: number, month: number) {
   const first = new Date(year, month, 1);
   const startDay = (first.getDay() + 6) % 7; // Monday = 0
@@ -561,125 +563,91 @@ function BarberCalendarCore() {
 
   const [savedPulse, setSavedPulse] = useState<{ day: string; time: string; ts: number } | null>(null);
 
-  // Swipe gestures (day editor)
+  // ---------------------------------------------------------------------------
+  // Day editor — iOS-native feel: horizontal paging with scroll-snap (no JS drag)
+  // Outer: horizontal scroll-snap between prev/current/next day.
+  // Inner: independent vertical scroll for slots (fast, never hijacked).
+  // ---------------------------------------------------------------------------
+  const dayPagerRef = useRef<HTMLDivElement | null>(null);
+  const dayPagerWidthRef = useRef(0);
+  const dayPagerLockRef = useRef(false);
+  const dayPagerTimerRef = useRef<number | null>(null);
 
-  // =============================================================================
-  // Day editor swipe gestures (FAST + iOS-safe)
-  // - We NEVER translate/drag the scroll container while finger is down.
-  // - We only decide on swipe on TouchEnd (direction-lock).
-  // This avoids the classic iOS bug where one horizontal gesture can "kill" vertical scrolling.
-  // =============================================================================
-  const swipeStartX = useRef<number | null>(null);
-  const swipeStartY = useRef<number | null>(null);
-  const swipeDX = useRef(0);
-  const swipeDY = useRef(0);
-  const swipeBlockedRef = useRef(false);
+  const shiftSelectedDay = useCallback(
+    (delta: number) => {
+      setSelectedDate((prev) => {
+        if (!prev) return prev;
+        const next = addDays(prev, delta);
+        if (next.getFullYear() !== viewYear || next.getMonth() !== viewMonth) {
+          setViewYear(next.getFullYear());
+          setViewMonth(next.getMonth());
+        }
+        return next;
+      });
+    },
+    [viewYear, viewMonth],
+  );
 
-  const [swipeStyle, setSwipeStyle] = useState<React.CSSProperties>({});
-  const swipeModeRef = useRef<'none' | 'horizontal' | 'vertical'>('none');
+  const centerDayPager = useCallback(() => {
+    const el = dayPagerRef.current;
+    if (!el) return;
+    const w = el.clientWidth || 0;
+    if (!w) return;
+    dayPagerWidthRef.current = w;
+    // Center panel = "current day" at index 1
+    el.scrollLeft = w;
+  }, []);
 
-  const SWIPE_THRESHOLD = 85; // px
-  const LOCK_RATIO = 1.35; // direction lock
-  const MIN_MOVE = 12; // px
-  const SNAP_EASE = 'cubic-bezier(0.25, 0.9, 0.25, 1)';
+  useEffect(() => {
+    if (!selectedDate) return;
+    // Center on open (after layout)
+    const t = window.setTimeout(() => centerDayPager(), 0);
+    const onResize = () => centerDayPager();
+    window.addEventListener('resize', onResize);
+    return () => {
+      window.clearTimeout(t);
+      window.removeEventListener('resize', onResize);
+    };
+  }, [selectedDate, centerDayPager]);
 
-  const shiftSelectedDay = (delta: number) => {
-    setSelectedDate((prev) => {
-      if (!prev) return prev;
-      const next = addDays(prev, delta);
-      if (next.getFullYear() !== viewYear || next.getMonth() !== viewMonth) {
-        setViewYear(next.getFullYear());
-        setViewMonth(next.getMonth());
+  const onDayPagerScroll = useCallback(() => {
+    const el = dayPagerRef.current;
+    if (!el) return;
+    if (dayPagerLockRef.current) return;
+
+    if (dayPagerTimerRef.current != null) window.clearTimeout(dayPagerTimerRef.current);
+
+    // Debounce so we react after the swipe settles (feels like iOS calendar)
+    dayPagerTimerRef.current = window.setTimeout(() => {
+      const w = dayPagerWidthRef.current || el.clientWidth || 0;
+      if (!w) return;
+
+      const x = el.scrollLeft;
+
+      // If user swiped enough to reach neighboring page, change day and snap back to center.
+      if (x <= w * 0.35) {
+        dayPagerLockRef.current = true;
+        shiftSelectedDay(-1);
+        requestAnimationFrame(() => {
+          el.scrollLeft = w;
+          window.setTimeout(() => (dayPagerLockRef.current = false), 60);
+        });
+      } else if (x >= w * 1.65) {
+        dayPagerLockRef.current = true;
+        shiftSelectedDay(+1);
+        requestAnimationFrame(() => {
+          el.scrollLeft = w;
+          window.setTimeout(() => (dayPagerLockRef.current = false), 60);
+        });
       }
-      return next;
-    });
-  };
+    }, 80);
+  }, [shiftSelectedDay]);
 
-  const flashSwipe = () => {
-    setSwipeStyle({ opacity: 0.72, transition: `opacity 120ms ${SNAP_EASE}` });
-    window.setTimeout(() => setSwipeStyle({}), 140);
-  };
-
-  const onTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
-    // If user starts on an input/textarea/select, never treat it as swipe
-    const target = e.target as Element | null;
-    if (isTypingTarget(target)) {
-      swipeBlockedRef.current = true;
-      swipeStartX.current = null;
-      swipeStartY.current = null;
-      swipeModeRef.current = 'none';
-      return;
-    }
-    swipeBlockedRef.current = false;
-
-    if (e.touches.length !== 1) return;
-    swipeStartX.current = e.touches[0].clientX;
-    swipeStartY.current = e.touches[0].clientY;
-    swipeDX.current = 0;
-    swipeDY.current = 0;
-    swipeModeRef.current = 'none';
-  };
-
-  const onTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
-    if (swipeBlockedRef.current) return;
-    if (swipeStartX.current == null || swipeStartY.current == null) return;
-    if (e.touches.length !== 1) return;
-
-    const dx = e.touches[0].clientX - swipeStartX.current;
-    const dy = e.touches[0].clientY - swipeStartY.current;
-    swipeDX.current = dx;
-    swipeDY.current = dy;
-
-    const absX = Math.abs(dx);
-    const absY = Math.abs(dy);
-    if (absX < MIN_MOVE && absY < MIN_MOVE) return;
-
-    // Lock direction once we are sure
-    if (swipeModeRef.current === 'none') {
-      if (absY > absX * LOCK_RATIO) {
-        swipeModeRef.current = 'vertical';
-        return; // let native scrolling do its job
-      }
-      if (absX > absY * LOCK_RATIO) {
-        swipeModeRef.current = 'horizontal';
-        return; // still don't preventDefault (keeps iOS happy)
-      }
-    }
-  };
-
-  const onTouchEnd = () => {
-    if (swipeBlockedRef.current) {
-      swipeBlockedRef.current = false;
-      swipeModeRef.current = 'none';
-      swipeStartX.current = null;
-      swipeStartY.current = null;
-      swipeDX.current = 0;
-      swipeDY.current = 0;
-      return;
-    }
-    if (swipeStartX.current == null) return;
-
-    const dx = swipeDX.current;
-    const dy = swipeDY.current;
-
-    swipeStartX.current = null;
-    swipeStartY.current = null;
-    swipeDX.current = 0;
-    swipeDY.current = 0;
-
-    if (swipeModeRef.current === 'horizontal') {
-      // Confirm it is truly horizontal (protect against diagonal scroll)
-      if (Math.abs(dx) >= SWIPE_THRESHOLD && Math.abs(dx) > Math.abs(dy) * LOCK_RATIO) {
-        flashSwipe();
-        // Swipe LEFT -> next day, Swipe RIGHT -> previous day
-        shiftSelectedDay(dx < 0 ? +1 : -1);
-      }
-    }
-
-    swipeModeRef.current = 'none';
-  };
-
-
+  useEffect(() => {
+    return () => {
+      if (dayPagerTimerRef.current != null) window.clearTimeout(dayPagerTimerRef.current);
+    };
+  }, []);
   // SAVE / DELETE (SAFE PATCH)
   const saveName = useCallback(
     (day: string, time: string, nameRaw: string) => {
@@ -1447,6 +1415,7 @@ function BarberCalendarCore() {
         <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/80" onMouseDown={() => setSelectedDate(null)}>
           <div
             className="max-w-6xl w-[94vw] md:w-[1100px] h-[90vh] rounded-2xl border border-neutral-700 bg-[rgb(10,10,10)] p-4 md:p-6 shadow-2xl overflow-hidden"
+            style={panelStyle}
             onMouseDown={(e) => e.stopPropagation()}
             onTouchStart={(e) => e.stopPropagation()}
           >
@@ -1454,8 +1423,8 @@ function BarberCalendarCore() {
               {/* Header: tap to close */}
               <div
                 className="flex items-center justify-between cursor-pointer"
-                onMouseDown={(e) => { e.stopPropagation(); setSelectedDate(null); }}
-                onTouchStart={(e) => { e.stopPropagation(); setSelectedDate(null); }}
+                onMouseDown={(e) => { e.stopPropagation(); animateCloseDown(); }}
+                onTouchStart={(e) => { e.stopPropagation(); animateCloseDown(); }}
                 title="Tap to close"
               >
                 <h3 className="text-2xl md:text-3xl font-bold" style={{ fontFamily: BRAND.fontTitle }}>
@@ -1466,51 +1435,55 @@ function BarberCalendarCore() {
 
               {/* Slots */}
               <div
-                className="mt-4 flex-1 overflow-y-auto md:overflow-visible"
-                onTouchStart={onTouchStart}
-                onTouchMove={onTouchMove}
-                onTouchEnd={onTouchEnd}
-                onTouchCancel={onTouchEnd}
+                ref={dayPagerRef}
+                onScroll={onDayPagerScroll}
+                className="mt-4 flex-1 overflow-x-auto overflow-y-hidden"
                 style={{
-                  ...swipeStyle,
-                  touchAction: 'pan-y',
-                  paddingBottom: keyboardInset ? `${keyboardInset}px` : undefined,
+                  display: 'flex',
+                  scrollSnapType: 'x mandatory',
+                  WebkitOverflowScrolling: 'touch',
+                  touchAction: 'pan-x',
+                  scrollbarWidth: 'none',
                 }}
               >
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5" style={{ gridAutoRows: 'minmax(32px,1fr)' }}>
-                  {DAY_SLOTS.map((time) => {
-                    const value = (selectedDayMap as Record<string, string>)[time] || '';
-                    const isSaved = !!(savedPulse && savedPulse.day === selectedDayISO && savedPulse.time === time);
-                    const timeKey = `${selectedDayISO}_${time}`;
-                    const isArmed = armedRemove === timeKey;
-                    const isHighlighted = !!highlight && highlight.day === selectedDayISO && highlight.time === time;
+                {([-1, 0, 1] as const).map((offset) => {
+                  if (!selectedDate) return null;
+                  const day = addDays(selectedDate, offset);
+                  const dayISO = toISODate(day);
+                  const dayMap = store[dayISO] || {};
+                  const isCurrent = offset === 0;
 
-                    return (
-                      <SlotRow
-                        key={timeKey}
-                        dayISO={selectedDayISO}
-                        time={time}
-                        value={value}
-                        isSaved={isSaved}
-                        isArmed={isArmed}
-                        isHighlighted={isHighlighted}
-                        canWrite={remoteReady}
-                        onStartEditing={startEditing}
-                        onStopEditing={stopEditing}
-                        onSave={saveName}
-                        onArm={armRemove}
-                        onConfirmRemove={confirmRemove}
-                        onRevealFocus={revealFocus}
-                      />
-                    );
-                  })}
-                </div>
-
-                {!remoteReady && (
-                  <div className="mt-3 text-xs text-neutral-500 text-center" style={{ fontFamily: BRAND.fontBody }}>
-                    Зареждане от сървъра… (записът е заключен)
-                  </div>
-                )}
+                  return (
+                    <div
+                      key={dayISO}
+                      className="min-w-full h-full"
+                      style={{ scrollSnapAlign: 'center' }}
+                    >
+                      <div
+                        className="h-full overflow-y-auto pr-1"
+                        style={{
+                          WebkitOverflowScrolling: 'touch',
+                          touchAction: 'pan-y',
+                          paddingBottom: keyboardInset ? `${Math.max(0, keyboardInset - 24)}px` : undefined,
+                        }}
+                      >
+                        <div className="grid gap-2">
+                          {SLOTS.map((t) => (
+                            <SlotRow
+                              key={t}
+                              time={t}
+                              value={dayMap[t] || ''}
+                              onChange={(v) => saveName(dayISO, t, v)}
+                              onDelete={() => deleteName(dayISO, t)}
+                              isHighlight={isCurrent && pendingFocusRef.current === `${dayISO}|${t}`}
+                              remoteReady={remoteReady}
+                            />
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           </div>
