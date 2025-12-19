@@ -576,7 +576,7 @@ function BarberCalendarCore() {
 
   // ✅ iPhone scroll vs swipe tuning:
   // - Make horizontal swipe less sensitive so vertical scrolling wins.
-  const SWIPE_THRESHOLD = 72; // was 52
+  const SWIPE_THRESHOLD = 52; // was 52
   const VERTICAL_CLOSE_THRESHOLD = 95;
   const SNAP_EASE = 'cubic-bezier(0.25, 0.9, 0.25, 1)';
 
@@ -711,18 +711,25 @@ useEffect(() => {
     const ay = Math.abs(dy);
 
     if (mode === 'none') {
-      // Let vertical scrolling win unless it's clearly horizontal
-      if (ay > 10 && ay > ax) {
+      // Let vertical scrolling win, but don't steal diagonal swipes too early
+      if (ay > 14 && ay > ax * 1.10) {
         mode = 'vertical';
         return;
       }
-      // Stricter horizontal lock for iPhone Safari
-      if (ax > 22 && ax > ay * 1.45) {
+
+      // Horizontal lock: easier to trigger (works better on iPhone + Android)
+      if (ax > 16 && ax > ay * 1.10) {
         mode = 'horizontal';
-        document.addEventListener('touchmove', onDocMove as any, { passive: false });
-        docMoveAttached = true;
+        if (!docMoveAttached) {
+          document.addEventListener('touchmove', onDocMove as any, { passive: false });
+          docMoveAttached = true;
+        }
+        // immediately render first frame
+        const clamped = clamp(dx, -H_DRAG_CLAMP, H_DRAG_CLAMP);
+        setSwipeStyle({ transform: `translateX(${clamped}px)`, transition: 'none' });
         return;
       }
+
       return;
     }
 
