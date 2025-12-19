@@ -564,155 +564,82 @@ function BarberCalendarCore() {
   // Swipe gestures (day editor)
   const swipeStartX = useRef<number | null>(null);
   const swipeStartY = useRef<number | null>(null);
-  const swipeDX = useRef<number>(0);
-  const swipeDY = useRef<number>(0);
+  const swipeDX = useRef(0);
+  const swipeDY = useRef(0);
+  const swipeModeRef = useRef<'none' | 'horizontal' | 'vertical'>('none');
 
-  const [swipeStyle, setSwipeStyle] = useState<React.CSSProperties>({});
-  const [panelStyle, setPanelStyle] = useState<React.CSSProperties>({});
-  const gestureModeRef = useRef<'none' | 'horizontal' | 'vertical'>('none');
+  // Minimal, non-dragging feedback (prevents iOS "shake/drag" feel)
+  const [daySwipeFlash, setDaySwipeFlash] = useState(false);
 
-  // ✅ iPhone scroll vs swipe tuning:
-  // - Make horizontal swipe less sensitive so vertical scrolling wins.
-  const SWIPE_THRESHOLD = 72; // was 52
-  const VERTICAL_CLOSE_THRESHOLD = 95;
-  const SNAP_EASE = 'cubic-bezier(0.25, 0.9, 0.25, 1)';
+  const SWIPE_THRESHOLD = 72; // px
+  const SWIPE_INTENT_LOCK = 1.25; // absX must beat absY by this factor
+  const SWIPE_INTENT_MIN = 22; // px
 
-  const H_DRAG_CLAMP = 220;
-  const V_DRAG_CLAMP = 240;
-
-  // intent thresholds (helps iPhone scrolling)
-  const H_INTENT_SLOP = 18;
-  const V_INTENT_SLOP = 10;
-  const INTENT_RATIO = 1.35;
-
-  const isTabletOrBigger = () =>
-    typeof window !== 'undefined' &&
-    (window.matchMedia ? window.matchMedia('(min-width: 768px)').matches : window.innerWidth >= 768);
-
-  useEffect(() => {
-    setSwipeStyle({});
-    setPanelStyle({});
-    gestureModeRef.current = 'none';
-    setArmedRemove(null);
-    clearArmedTimeout();
-  }, [selectedDate, clearArmedTimeout]);
-
-  useEffect(() => () => clearArmedTimeout(), [clearArmedTimeout]);
-
-  const shiftSelectedDay = (delta: number) => {
-    setSelectedDate((prev) => {
-      if (!prev) return prev;
-      const next = addDays(prev, delta);
-      if (next.getFullYear() !== viewYear || next.getMonth() !== viewMonth) {
-        setViewYear(next.getFullYear());
-        setViewMonth(next.getMonth());
-      }
-      return next;
-    });
-  };
-
-  const animateShift = (delta: number) => {
-    setSwipeStyle({
-      transform: `translateX(${delta > 0 ? -22 : 22}px)`,
-      opacity: 0.55,
-      transition: `transform 140ms ${SNAP_EASE}, opacity 140ms ${SNAP_EASE}`,
-    });
-    setTimeout(() => {
-      shiftSelectedDay(delta);
-      setSwipeStyle({
-        transform: `translateX(${delta > 0 ? 22 : -22}px)`,
-        opacity: 0.55,
-        transition: 'none',
-      });
-      requestAnimationFrame(() => {
-        setSwipeStyle({
-          transform: 'translateX(0)',
-          opacity: 1,
-          transition: `transform 160ms ${SNAP_EASE}, opacity 160ms ${SNAP_EASE}`,
-        });
-      });
-    }, 140);
-  };
-
-  const animateCloseDown = () => {
-    setPanelStyle({
-      transform: 'translateY(160px)',
-      opacity: 0,
-      transition: `transform 170ms ${SNAP_EASE}, opacity 150ms ${SNAP_EASE}`,
-    });
-    setTimeout(() => {
-      setSelectedDate(null);
-      setPanelStyle({});
-      setSwipeStyle({});
-      gestureModeRef.current = 'none';
-      setPendingFocus(null);
-    }, 170);
+  const flashSwipe = () => {
+    setDaySwipeFlash(true);
+    window.setTimeout(() => setDaySwipeFlash(false), 140);
   };
 
   const onTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
-    // Start a gesture on the day editor scroll area.
-    // We DO NOT move/drag the UI with the finger (no translateX during hold).
-    swipeStartX.current = e.touches[0].clientX;
-    swipeStartY.current = e.touches[0].clientY;
+    // If the user starts on an input, let iOS handle it (focus/selection) and don't attempt to swipe days.
+    if (isTypingTarget(e.target as any)) return;
+
+    const t = e.touches[0];
+    swipeStartX.current = t.clientX;
+    swipeStartY.current = t.clientY;
     swipeDX.current = 0;
     swipeDY.current = 0;
-    gestureModeRef.current = 'none';
+    swipeModeRef.current = 'none';
   };
 
   const onTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
     if (swipeStartX.current == null || swipeStartY.current == null) return;
 
-    const dxRaw = e.touches[0].clientX - swipeStartX.current;
-    const dyRaw = e.touches[0].clientY - swipeStartY.current;
+    const t = e.touches[0];
+    const dx = t.clientX - swipeStartX.current;
+    const dy = t.clientY - swipeStartY.current;
 
-    swipeDX.current = dxRaw;
-    swipeDY.current = dyRaw;
+    swipeDX.current = dx;
+    swipeDY.current = dy;
 
-    const absX = Math.abs(dxRaw);
-    const absY = Math.abs(dyRaw);
+    const absX = Math.abs(dx);
+    const absY = Math.abs(dy);
 
-    // Decide intent once: horizontal swipe vs vertical scroll.
-    // Keep scroll smooth: only lock when we're confident it's a swipe.
-    if (gestureModeRef.current === 'none') {
-      if (absX > 18 && absX > absY * 1.25) {
-        gestureModeRef.current = 'horizontal';
-      } else if (absY > 18 && absY > absX * 1.25) {
-        gestureModeRef.current = 'vertical';
-      } else {
-        return;
-      }
+    if (swipeModeRef.current === 'none') {
+      // Decide the intent once, then never fight the browser scroll
+      if (absX > SWIPE_INTENT_MIN && absX > absY * SWIPE_INTENT_LOCK) swipeModeRef.current = 'horizontal';
+      else if (absY > SWIPE_INTENT_MIN && absY > absX * SWIPE_INTENT_LOCK) swipeModeRef.current = 'vertical';
     }
-
-    // If user is swiping horizontally, stop the scroll from hijacking it.
-    if (gestureModeRef.current === 'horizontal') {
-      // Note: React uses non-passive listeners, so preventDefault works here.
-      e.preventDefault();
-    }
+    // IMPORTANT: do NOT call preventDefault() here. iOS Safari + React passive listeners can break scrolling.
+    // Also do NOT drag/translate the list while finger is down (causes the "inputs move around" effect).
   };
 
   const onTouchEnd = () => {
-    if (swipeStartX.current == null) return;
+    if (swipeStartX.current == null || swipeStartY.current == null) return;
 
     const dx = swipeDX.current;
+    const dy = swipeDY.current;
 
     swipeStartX.current = null;
     swipeStartY.current = null;
     swipeDX.current = 0;
     swipeDY.current = 0;
 
-    if (gestureModeRef.current === 'horizontal') {
-      if (Math.abs(dx) >= SWIPE_THRESHOLD) {
-        // Swipe LEFT -> next day, Swipe RIGHT -> previous day
-        animateShift(dx > 0 ? -1 : 1);
-      }
-      gestureModeRef.current = 'none';
-      return;
+    const absX = Math.abs(dx);
+    const absY = Math.abs(dy);
+
+    // Only trigger a day change if the gesture was clearly horizontal.
+    const isHorizontal = swipeModeRef.current === 'horizontal' || (absX > SWIPE_THRESHOLD && absX > absY * SWIPE_INTENT_LOCK);
+
+    if (isHorizontal && absX >= SWIPE_THRESHOLD) {
+      flashSwipe();
+      // Swipe LEFT -> next day, Swipe RIGHT -> previous day
+      shiftSelectedDay(dx < 0 ? +1 : -1);
     }
 
-    gestureModeRef.current = 'none';
+    swipeModeRef.current = 'none';
   };
-
-  // SAVE / DELETE (SAFE PATCH)
+// SAVE / DELETE (SAFE PATCH)
   const saveName = useCallback(
     (day: string, time: string, nameRaw: string) => {
       if (!remoteReady) return;
@@ -1479,7 +1406,7 @@ function BarberCalendarCore() {
         <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/80" onMouseDown={() => setSelectedDate(null)}>
           <div
             className="max-w-6xl w-[94vw] md:w-[1100px] h-[90vh] rounded-2xl border border-neutral-700 bg-[rgb(10,10,10)] p-4 md:p-6 shadow-2xl overflow-hidden"
-            style={panelStyle}
+            style={{}}
             onMouseDown={(e) => e.stopPropagation()}
             onTouchStart={(e) => e.stopPropagation()}
           >
@@ -1487,8 +1414,8 @@ function BarberCalendarCore() {
               {/* Header: tap to close */}
               <div
                 className="flex items-center justify-between cursor-pointer"
-                onMouseDown={(e) => { e.stopPropagation(); animateCloseDown(); }}
-                onTouchStart={(e) => { e.stopPropagation(); animateCloseDown(); }}
+                onMouseDown={(e) => { e.stopPropagation(); setSelectedDate(null); }}
+                onTouchStart={(e) => { e.stopPropagation(); setSelectedDate(null); }}
                 title="Tap to close"
               >
                 <h3 className="text-2xl md:text-3xl font-bold" style={{ fontFamily: BRAND.fontTitle }}>
@@ -1505,7 +1432,8 @@ function BarberCalendarCore() {
                 onTouchEnd={onTouchEnd}
                 onTouchCancel={onTouchEnd}
                 style={{
-                  ...swipeStyle,
+                  opacity: daySwipeFlash ? 0.92 : 1,
+                  transition: 'opacity 120ms ease',
                   touchAction: 'pan-y',
                   paddingBottom: keyboardInset ? `${keyboardInset}px` : undefined,
                 }}
