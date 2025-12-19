@@ -1,8 +1,5 @@
 'use client';
-// Bushi Admin — Month grid + Day editor + Year view + Search + Closest available
-// Supabase sync (SAFE PATCH writes) + iPhone fixes:
-// 1) Day swipe is HEADER-ONLY so scrolling in slots never gets hijacked
-// 2) iPhone keyboard: add bottom inset padding + auto scroll focused input into view
+// Bushi Admin — Month grid + Day editor + Year view + Search + Closest available (Supabase sync, SAFE PATCH writes)
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
@@ -56,10 +53,13 @@ function injectBushiStyles() {
 // Helpers
 // =============================================================================
 const pad = (n: number) => (n < 10 ? `0${n}` : `${n}`);
-const toISODate = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-const addDays = (d: Date, delta: number) => new Date(d.getFullYear(), d.getMonth(), d.getDate() + delta);
+const toISODate = (d: Date) =>
+  `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const addDays = (d: Date, delta: number) =>
+  new Date(d.getFullYear(), d.getMonth(), d.getDate() + delta);
 
-const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
+const clamp = (v: number, min: number, max: number) =>
+  Math.max(min, Math.min(max, v));
 
 function monthMatrix(year: number, month: number) {
   const first = new Date(year, month, 1);
@@ -93,7 +93,15 @@ const slotInputId = (dayISO: string, time: string) =>
 // =============================================================================
 const WEEKDAYS_SHORT = ['Пон', 'Вто', 'Сря', 'Чет', 'Пет', 'Съб', 'Нед'];
 
-const WEEKDAYS_FULL = ['Понеделник', 'Вторник', 'Сряда', 'Четвъртък', 'Петък', 'Събота', 'Неделя'];
+const WEEKDAYS_FULL = [
+  'Понеделник',
+  'Вторник',
+  'Сряда',
+  'Четвъртък',
+  'Петък',
+  'Събота',
+  'Неделя',
+];
 
 const MONTHS = [
   'Януари',
@@ -222,6 +230,8 @@ type SlotRowProps = {
   onSave: (day: string, time: string, nameRaw: string) => void;
   onArm: (timeKey: string) => void;
   onConfirmRemove: (day: string, time: string) => void;
+
+  // ✅ iPhone keyboard safety: ensure focused input is visible
   onRevealFocus: (day: string, time: string, inputEl: HTMLInputElement) => void;
 };
 
@@ -267,6 +277,7 @@ const SlotRow = React.memo(
             onFocus={(e) => {
               e.currentTarget.dataset.orig = e.currentTarget.value;
               onStartEditing();
+              // ✅ keep it visible above the iPhone keyboard
               onRevealFocus(dayISO, time, e.currentTarget);
             }}
             onKeyDown={(e) => {
@@ -304,7 +315,6 @@ const SlotRow = React.memo(
               }`}
               aria-label={isArmed ? 'Потвърди' : 'Премахни'}
               title={isArmed ? 'Потвърди' : 'Премахни'}
-              type="button"
             >
               <img
                 src={isArmed ? '/tick-green.png' : '/razor.png'}
@@ -365,7 +375,7 @@ function BarberCalendarCore() {
   const [store, setStore] = useState<Store>({});
   const [remoteReady, setRemoteReady] = useState(false);
 
-  // ✅ iPhone keyboard inset (visualViewport)
+  // ✅ iPhone keyboard: bottom inset so you can see bottom inputs while typing
   const [keyboardInset, setKeyboardInset] = useState(0);
 
   useEffect(() => {
@@ -381,6 +391,7 @@ function BarberCalendarCore() {
     computeInset();
     vv.addEventListener('resize', computeInset);
     vv.addEventListener('scroll', computeInset);
+
     return () => {
       vv.removeEventListener('resize', computeInset);
       vv.removeEventListener('scroll', computeInset);
@@ -460,29 +471,29 @@ function BarberCalendarCore() {
   }, []);
 
   const stopEditing = useCallback(() => {
+    // If a remote sync arrived while typing, don't apply that stale snapshot later.
+    // Discard it and re-sync shortly after blur so the server stays the source of truth.
     if (pendingRemoteRef.current) {
       pendingRemoteRef.current = null;
       window.setTimeout(() => {
         syncFromRemote();
       }, 900);
     }
+
+    // IMPORTANT: when you click from one slot input to another, blur fires first.
+    // Don’t mark "not editing" until we confirm no other slot input is focused.
     window.setTimeout(() => {
       editingRef.current = isSlotInputFocused();
     }, 0);
   }, [syncFromRemote, isSlotInputFocused]);
 
-  // ✅ reveal focused input above keyboard
-  const revealFocus = useCallback((_day: string, _time: string, inputEl: HTMLInputElement) => {
+  // ✅ when focusing an input near the bottom, iOS keyboard can cover it — reveal it
+  const revealFocus = useCallback((day: string, time: string, inputEl: HTMLInputElement) => {
     window.setTimeout(() => {
-      try {
-        inputEl.scrollIntoView({ block: 'center', behavior: 'smooth' });
-      } catch {}
-      // second pass after keyboard animation finishes
+      try { inputEl.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch {}
       window.setTimeout(() => {
-        try {
-          inputEl.scrollIntoView({ block: 'center', behavior: 'smooth' });
-        } catch {}
-      }, 160);
+        try { inputEl.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch {}
+      }, 140);
     }, 60);
   }, []);
 
@@ -550,9 +561,10 @@ function BarberCalendarCore() {
 
   const [savedPulse, setSavedPulse] = useState<{ day: string; time: string; ts: number } | null>(null);
 
-  // =============================================================================
-  // Day editor gestures — HEADER ONLY
-  // =============================================================================
+  // Day editor scroll container ref (for swipe-anywhere w/ scroll-safe gesture lock)
+  const slotsScrollRef = useRef<HTMLDivElement | null>(null);
+
+  // Swipe gestures (day editor)
   const swipeStartX = useRef<number | null>(null);
   const swipeStartY = useRef<number | null>(null);
   const swipeDX = useRef<number>(0);
@@ -562,11 +574,19 @@ function BarberCalendarCore() {
   const [panelStyle, setPanelStyle] = useState<React.CSSProperties>({});
   const gestureModeRef = useRef<'none' | 'horizontal' | 'vertical'>('none');
 
-  const SWIPE_THRESHOLD = 60;
+  // ✅ iPhone scroll vs swipe tuning:
+  // - Make horizontal swipe less sensitive so vertical scrolling wins.
+  const SWIPE_THRESHOLD = 72; // was 52
   const VERTICAL_CLOSE_THRESHOLD = 95;
   const SNAP_EASE = 'cubic-bezier(0.25, 0.9, 0.25, 1)';
+
   const H_DRAG_CLAMP = 220;
   const V_DRAG_CLAMP = 240;
+
+  // intent thresholds (helps iPhone scrolling)
+  const H_INTENT_SLOP = 18;
+  const V_INTENT_SLOP = 10;
+  const INTENT_RATIO = 1.35;
 
   const isTabletOrBigger = () =>
     typeof window !== 'undefined' &&
@@ -632,7 +652,7 @@ function BarberCalendarCore() {
     }, 170);
   };
 
-  const onHeaderTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
+  const onTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
     swipeStartX.current = e.touches[0].clientX;
     swipeStartY.current = e.touches[0].clientY;
     swipeDX.current = 0;
@@ -642,7 +662,7 @@ function BarberCalendarCore() {
     setPanelStyle({ transition: 'none', transform: 'translateY(0)', opacity: 1 });
   };
 
-  const onHeaderTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
+  const onTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
     if (swipeStartX.current == null || swipeStartY.current == null) return;
 
     const dxRaw = e.touches[0].clientX - swipeStartX.current;
@@ -655,9 +675,22 @@ function BarberCalendarCore() {
     const absY = Math.abs(dyRaw);
 
     if (gestureModeRef.current === 'none') {
-      if (isTabletOrBigger() && dyRaw > 0 && absY > absX * 1.2) gestureModeRef.current = 'vertical';
-      else if (absX > absY * 1.15 && absX > 10) gestureModeRef.current = 'horizontal';
-      else return;
+      // If it looks like a scroll, let the browser scroll (do NOT capture swipe).
+      if (absY >= V_INTENT_SLOP && absY > absX * 1.05) {
+        return;
+      }
+
+      // Only start horizontal swipe if clearly horizontal AND moved enough.
+      if (absX >= H_INTENT_SLOP && absX > absY * INTENT_RATIO) {
+        gestureModeRef.current = 'horizontal';
+      } else {
+        return;
+      }
+
+      // Optional: allow vertical close on tablet when clearly vertical-down
+      if (isTabletOrBigger() && dyRaw > 0 && absY > absX * 1.2) {
+        gestureModeRef.current = 'vertical';
+      }
     }
 
     if (gestureModeRef.current === 'vertical') {
@@ -674,7 +707,7 @@ function BarberCalendarCore() {
     }
   };
 
-  const onHeaderTouchEnd = () => {
+  const onTouchEnd = () => {
     if (swipeStartX.current == null) return;
 
     const dx = swipeDX.current;
@@ -711,11 +744,7 @@ function BarberCalendarCore() {
     }
 
     setSwipeStyle({ transform: 'translateX(0)', transition: `transform 160ms ${SNAP_EASE}` });
-    setPanelStyle({
-      transform: 'translateY(0)',
-      opacity: 1,
-      transition: `transform 160ms ${SNAP_EASE}, opacity 160ms ${SNAP_EASE}`,
-    });
+    setPanelStyle({ transform: 'translateY(0)', opacity: 1, transition: `transform 160ms ${SNAP_EASE}, opacity 160ms ${SNAP_EASE}` });
     setTimeout(() => setPanelStyle({}), 160);
   };
 
@@ -741,6 +770,7 @@ function BarberCalendarCore() {
         return next;
       });
 
+      // fire-and-forget PATCH (cannot wipe table)
       if (name === '') patchClearSlot(day, time);
       else patchSetSlot(day, time, name);
 
@@ -776,7 +806,11 @@ function BarberCalendarCore() {
   );
 
   const selectedDayISO = useMemo(() => (selectedDate ? toISODate(selectedDate) : null), [selectedDate]);
-  const selectedDayMap = useMemo(() => (selectedDayISO ? store[selectedDayISO] || {} : {}), [store, selectedDayISO]);
+
+  const selectedDayMap = useMemo(() => {
+    if (!selectedDayISO) return {};
+    return store[selectedDayISO] || {};
+  }, [store, selectedDayISO]);
 
   useEffect(() => {
     if (!selectedDate) return;
@@ -799,9 +833,7 @@ function BarberCalendarCore() {
     const t = window.setTimeout(() => {
       const el = document.getElementById(id) as HTMLInputElement | null;
       if (el) {
-        try {
-          el.scrollIntoView({ block: 'center', behavior: 'smooth' });
-        } catch {}
+        try { el.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch {}
         el.focus();
         el.select();
       }
@@ -844,6 +876,7 @@ function BarberCalendarCore() {
 
       cur = addDays(cur, 1);
     }
+
     return out;
   }, [store, todayISO]);
 
@@ -911,7 +944,7 @@ function BarberCalendarCore() {
     setHighlight({ day: dayISOKey, time, ts: Date.now() });
   };
 
-  // Weekend buttons
+  // Weekend buttons (emoji same size)
   const weekendBtnClass =
     'w-14 md:w-16 h-10 md:h-11 rounded-2xl border border-neutral-700/70 bg-neutral-900/65 hover:bg-neutral-800/75 transition grid place-items-center shadow-[0_14px_40px_rgba(0,0,0,0.75)]';
   const weekendEmojiClass = 'text-[18px] md:text-[20px] leading-none';
@@ -929,6 +962,7 @@ function BarberCalendarCore() {
   const MONTH_H_CLAMP = 260;
 
   useEffect(() => {
+    // reset visual state when the month changes
     setMonthStyle({});
     monthModeRef.current = 'none';
     monthStartX.current = null;
@@ -970,6 +1004,7 @@ function BarberCalendarCore() {
   };
 
   const onMonthTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
+    // If any modal is open, the overlay will eat touches anyway — but keep it safe.
     if (showYear || selectedDate || showSearch || showAvail) return;
 
     monthStartX.current = e.touches[0].clientX;
@@ -995,9 +1030,10 @@ function BarberCalendarCore() {
     const absY = Math.abs(dyRaw);
 
     if (monthModeRef.current === 'none') {
+      // small slop so taps still open days
       if (absX > 12 && absX > absY * 1.15) {
         monthModeRef.current = 'horizontal';
-        monthBlockClickRef.current = true;
+        monthBlockClickRef.current = true; // prevent day click behind the swipe
       } else {
         return;
       }
@@ -1011,6 +1047,7 @@ function BarberCalendarCore() {
 
   const onMonthTouchEnd = () => {
     if (monthStartX.current == null) return;
+
     const dx = monthDX.current;
 
     monthStartX.current = null;
@@ -1025,6 +1062,8 @@ function BarberCalendarCore() {
       } else {
         setMonthStyle({ transform: 'translateX(0)', transition: `transform 170ms ${SNAP_EASE}` });
       }
+
+      // allow clicks again shortly after gesture settles
       window.setTimeout(() => {
         monthBlockClickRef.current = false;
       }, 220);
@@ -1037,7 +1076,7 @@ function BarberCalendarCore() {
     monthBlockClickRef.current = false;
   };
 
-  // Year modal gestures (unchanged)
+  // Year modal gestures (1:1 drag)
   const yearStartX = useRef<number | null>(null);
   const yearStartY = useRef<number | null>(null);
   const yearDX = useRef<number>(0);
@@ -1070,21 +1109,13 @@ function BarberCalendarCore() {
       setViewYear((y) => y + deltaYear);
       setYearStyle({ transform: `translateX(${deltaYear > 0 ? 22 : -22}px)`, opacity: 0.55, transition: 'none' });
       requestAnimationFrame(() => {
-        setYearStyle({
-          transform: 'translateX(0)',
-          opacity: 1,
-          transition: `transform 160ms ${SNAP_EASE}, opacity 160ms ${SNAP_EASE}`,
-        });
+        setYearStyle({ transform: 'translateX(0)', opacity: 1, transition: `transform 160ms ${SNAP_EASE}, opacity 160ms ${SNAP_EASE}` });
       });
     }, 140);
   };
 
   const animateYearCloseDown = () => {
-    setYearStyle({
-      transform: 'translateY(160px)',
-      opacity: 0,
-      transition: `transform 170ms ${SNAP_EASE}, opacity 150ms ${SNAP_EASE}`,
-    });
+    setYearStyle({ transform: 'translateY(160px)', opacity: 0, transition: `transform 170ms ${SNAP_EASE}, opacity 150ms ${SNAP_EASE}` });
     setTimeout(() => {
       setShowYear(false);
       setYearStyle({});
@@ -1145,11 +1176,7 @@ function BarberCalendarCore() {
     if (yearModeRef.current === 'vertical') {
       if (dy >= YEAR_CLOSE_THRESHOLD) animateYearCloseDown();
       else {
-        setYearStyle({
-          transform: 'translateY(0)',
-          opacity: 1,
-          transition: `transform 160ms ${SNAP_EASE}, opacity 140ms ${SNAP_EASE}`,
-        });
+        setYearStyle({ transform: 'translateY(0)', opacity: 1, transition: `transform 160ms ${SNAP_EASE}, opacity 140ms ${SNAP_EASE}` });
         setTimeout(() => setYearStyle({}), 160);
       }
       yearModeRef.current = 'none';
@@ -1166,8 +1193,6 @@ function BarberCalendarCore() {
     setYearStyle({ transform: 'translateX(0)', transition: `transform 160ms ${SNAP_EASE}` });
     yearModeRef.current = 'none';
   };
-
-  const matrixFlat = matrix.flat();
 
   return (
     <div
@@ -1201,17 +1226,13 @@ function BarberCalendarCore() {
             className="text-3xl sm:text-4xl md:text-7xl font-bold cursor-pointer hover:text-gray-300 select-none text-right flex-1 min-w-0 whitespace-nowrap"
             style={{ fontFamily: BRAND.fontTitle }}
             title="Open year view"
-            type="button"
           >
             {`${MONTHS[viewMonth]} ${viewYear}`}
           </button>
         </div>
 
         {/* Weekday labels + weekend buttons */}
-        <div
-          className="mt-[clamp(12px,2.8vw,28px)] grid grid-cols-7 gap-[clamp(6px,1.2vw,16px)] text-center"
-          style={{ fontFamily: BRAND.fontTitle }}
-        >
+        <div className="mt-[clamp(12px,2.8vw,28px)] grid grid-cols-7 gap-[clamp(6px,1.2vw,16px)] text-center" style={{ fontFamily: BRAND.fontTitle }}>
           {WEEKDAYS_SHORT.map((d, idx) => {
             const isSat = idx === 5;
             const isSun = idx === 6;
@@ -1219,23 +1240,11 @@ function BarberCalendarCore() {
             return (
               <div key={d} className="flex flex-col items-center gap-2">
                 {isSat ? (
-                  <button
-                    onClick={() => setShowAvail(true)}
-                    className={weekendBtnClass}
-                    aria-label="Свободни часове"
-                    title="Свободни часове"
-                    type="button"
-                  >
+                  <button onClick={() => setShowAvail(true)} className={weekendBtnClass} aria-label="Свободни часове" title="Свободни часове">
                     <span className={weekendEmojiClass}>⏱️</span>
                   </button>
                 ) : isSun ? (
-                  <button
-                    onClick={() => setShowSearch(true)}
-                    className={weekendBtnClass}
-                    aria-label="Търсене"
-                    title="Търсене"
-                    type="button"
-                  >
+                  <button onClick={() => setShowSearch(true)} className={weekendBtnClass} aria-label="Търсене" title="Търсене">
                     <span className={weekendEmojiClass}>🔍</span>
                   </button>
                 ) : (
@@ -1257,7 +1266,7 @@ function BarberCalendarCore() {
           onTouchEnd={onMonthTouchEnd}
           onTouchCancel={onMonthTouchEnd}
         >
-          {matrixFlat.map((d) => {
+          {matrix.flat().map((d) => {
             const inMonth = d.getMonth() === viewMonth;
             const key = toISODate(d);
             const num = d.getDate();
@@ -1269,30 +1278,15 @@ function BarberCalendarCore() {
             const cls = [
               'rounded-2xl flex items-center justify-center bg-neutral-900 text-white border transition cursor-pointer',
               'h-full w-full aspect-square md:aspect-auto p-[clamp(6px,1vw,20px)] focus:outline-none',
-              !inMonth
-                ? 'border-neutral-800 opacity-40 hover:opacity-70'
-                : isToday
-                  ? 'border-white/70 ring-2 ring-white/20'
-                  : 'border-neutral-700 hover:border-white/60',
+              !inMonth ? 'border-neutral-800 opacity-40 hover:opacity-70' : isToday ? 'border-white/70 ring-2 ring-white/20' : 'border-neutral-700 hover:border-white/60',
             ].join(' ');
 
             const barFillWidth = `${Math.round(ratio * 100)}%`;
 
             return (
-              <button
-                key={key}
-                onClick={() => {
-                  if (monthBlockClickRef.current) return;
-                  openDay(d);
-                }}
-                className={cls}
-                type="button"
-              >
+              <button key={key} onClick={() => { if (monthBlockClickRef.current) return; openDay(d); }} className={cls}>
                 <div className="flex flex-col items-center justify-center gap-2 w-full">
-                  <span
-                    className={`select-none text-[clamp(17px,3.5vw,32px)] ${isToday ? 'font-extrabold' : ''}`}
-                    style={{ fontFamily: BRAND.fontNumbers }}
-                  >
+                  <span className={`select-none text-[clamp(17px,3.5vw,32px)] ${isToday ? 'font-extrabold' : ''}`} style={{ fontFamily: BRAND.fontNumbers }}>
                     {inMonth && full ? 'X' : num}
                   </span>
 
@@ -1327,7 +1321,7 @@ function BarberCalendarCore() {
         </div>
       </div>
 
-      {/* Availability Modal */}
+      {/* Availability Modal (fixed: closes without click-through) */}
       {showAvail && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/70"
@@ -1356,7 +1350,6 @@ function BarberCalendarCore() {
                 className="rounded-2xl border border-neutral-700/70 bg-neutral-900/60 hover:bg-neutral-800/70 transition px-3 py-2 text-xs tracking-[0.18em] uppercase"
                 style={{ fontFamily: BRAND.fontBody }}
                 title="Обнови"
-                type="button"
               >
                 Refresh
               </button>
@@ -1381,7 +1374,6 @@ function BarberCalendarCore() {
                             key={`${h.dayISO}_${h.time}`}
                             onClick={() => openFromAvailability(h.dayISO, h.time)}
                             className="rounded-xl border border-neutral-800 bg-neutral-950/60 hover:bg-neutral-900/70 transition px-3 py-2 text-center"
-                            type="button"
                           >
                             <div className="text-sm font-semibold tabular-nums" style={{ fontFamily: BRAND.fontBody }}>
                               {h.time}
@@ -1402,7 +1394,7 @@ function BarberCalendarCore() {
         </div>
       )}
 
-      {/* Search Modal */}
+      {/* Search Modal (fixed: closes without click-through) */}
       {showSearch && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/70"
@@ -1461,17 +1453,12 @@ function BarberCalendarCore() {
                             key={`${h.dayISO}_${h.time}_${h.name}`}
                             onClick={() => openFromSearch(h.dayISO, h.time)}
                             className="rounded-xl border border-neutral-800 bg-neutral-950/60 hover:bg-neutral-900/70 transition px-3 py-2 text-left"
-                            type="button"
                           >
                             <div className="flex items-center justify-between gap-3">
                               <div className="text-sm font-semibold tabular-nums" style={{ fontFamily: BRAND.fontBody }}>
                                 {h.time}
                               </div>
-                              <div
-                                className="text-sm text-neutral-200 truncate"
-                                style={{ fontFamily: BRAND.fontBody }}
-                                title={h.name}
-                              >
+                              <div className="text-sm text-neutral-200 truncate" style={{ fontFamily: BRAND.fontBody }} title={h.name}>
                                 {h.name}
                               </div>
                             </div>
@@ -1495,18 +1482,9 @@ function BarberCalendarCore() {
             style={yearStyle}
             onClick={(e) => e.stopPropagation()}
             onMouseDown={(e) => e.stopPropagation()}
-            onTouchStart={(e) => {
-              e.stopPropagation();
-              onYearTouchStart(e);
-            }}
-            onTouchMove={(e) => {
-              e.stopPropagation();
-              onYearTouchMove(e);
-            }}
-            onTouchEnd={(e) => {
-              e.stopPropagation();
-              onYearTouchEnd();
-            }}
+            onTouchStart={(e) => { e.stopPropagation(); onYearTouchStart(e); }}
+            onTouchMove={(e) => { e.stopPropagation(); onYearTouchMove(e); }}
+            onTouchEnd={(e) => { e.stopPropagation(); onYearTouchEnd(); }}
           >
             <div className="flex items-center justify-center">
               <div className="text-[clamp(30px,6vw,44px)] leading-none select-none" style={{ fontFamily: BRAND.fontTitle }}>
@@ -1518,15 +1496,11 @@ function BarberCalendarCore() {
               {MONTHS.map((label, idx) => (
                 <button
                   key={label + viewYear}
-                  onClick={() => {
-                    setViewMonth(idx);
-                    setShowYear(false);
-                  }}
+                  onClick={() => { setViewMonth(idx); setShowYear(false); }}
                   className={`h-11 sm:h-12 rounded-2xl border text-[13px] sm:text-[14px] tracking-[0.12em] uppercase flex items-center justify-center transition ${
                     idx === viewMonth ? 'border-white text-white bg-neutral-900' : 'border-neutral-700/70 text-neutral-200 bg-neutral-900/50 hover:bg-neutral-800'
                   }`}
                   style={{ fontFamily: BRAND.fontTitle }}
-                  type="button"
                 >
                   {label}
                 </button>
@@ -1538,47 +1512,20 @@ function BarberCalendarCore() {
 
       {/* Day Editor Modal */}
       {selectedDate && selectedDayISO && (
-        <div
-          className="fixed inset-0 z-40 flex items-center justify-center bg-black/80"
-          onPointerDown={(e) => {
-            // close ONLY if you tap the dark overlay
-            if (e.target !== e.currentTarget) return;
-            e.preventDefault();
-            e.stopPropagation();
-            setSelectedDate(null);
-          }}
-        >
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/80" onMouseDown={() => setSelectedDate(null)}>
           <div
             className="max-w-6xl w-[94vw] md:w-[1100px] h-[90vh] rounded-2xl border border-neutral-700 bg-[rgb(10,10,10)] p-4 md:p-6 shadow-2xl overflow-hidden"
             style={panelStyle}
-            onPointerDown={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
+            onTouchStart={(e) => e.stopPropagation()}
           >
             <div className="flex h-full flex-col">
-              {/* Header: tap to close + swipe left/right (HEADER ONLY) */}
+              {/* Header: tap to close */}
               <div
-                className="flex items-center justify-between cursor-pointer select-none"
-                style={{ touchAction: 'pan-x' }} // allow horizontal swipes here
-                onMouseDown={(e) => {
-                  e.stopPropagation();
-                  animateCloseDown();
-                }}
-                onTouchStart={(e) => {
-                  e.stopPropagation();
-                  onHeaderTouchStart(e);
-                }}
-                onTouchMove={(e) => {
-                  e.stopPropagation();
-                  onHeaderTouchMove(e);
-                }}
-                onTouchEnd={(e) => {
-                  e.stopPropagation();
-                  onHeaderTouchEnd();
-                }}
-                onTouchCancel={(e) => {
-                  e.stopPropagation();
-                  onHeaderTouchEnd();
-                }}
-                title="Tap to close / Swipe left-right to change day"
+                className="flex items-center justify-between cursor-pointer"
+                onMouseDown={(e) => { e.stopPropagation(); animateCloseDown(); }}
+                onTouchStart={(e) => { e.stopPropagation(); animateCloseDown(); }}
+                title="Tap to close"
               >
                 <h3 className="text-2xl md:text-3xl font-bold" style={{ fontFamily: BRAND.fontTitle }}>
                   {WEEKDAYS_FULL[(selectedDate.getDay() + 6) % 7]} {selectedDate.getDate()} {MONTHS[selectedDate.getMonth()]} {selectedDate.getFullYear()}
@@ -1586,14 +1533,17 @@ function BarberCalendarCore() {
                 <div className="w-10 md:w-12" />
               </div>
 
-              {/* Slots: PURE SCROLL (no swipe handlers) */}
+              {/* Slots */}
               <div
-                className="mt-4 flex-1 overflow-y-auto"
+                className="mt-4 flex-1 overflow-y-auto md:overflow-visible"
+                onTouchStart={onTouchStart}
+                onTouchMove={onTouchMove}
+                onTouchEnd={onTouchEnd}
+                onTouchCancel={onTouchEnd}
                 style={{
                   ...swipeStyle,
+                  touchAction: 'pan-y',
                   paddingBottom: keyboardInset ? `${keyboardInset}px` : undefined,
-                  WebkitOverflowScrolling: 'touch',
-                  touchAction: 'pan-y', // make sure iOS treats this as vertical scroll area
                 }}
               >
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5" style={{ gridAutoRows: 'minmax(32px,1fr)' }}>
@@ -1723,4 +1673,4 @@ export default function BarbershopAdminPanel() {
   }
 
   return <BarberCalendarCore />;
-                }
+}
