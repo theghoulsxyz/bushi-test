@@ -218,22 +218,29 @@ function saveBackup(store: Store) {
 // Memoized slot row
 // =============================================================================
 type SlotRowProps = {
-  dayISO: string;
+  // Always-present basics
   time: string;
   value: string;
-  isSaved: boolean;
-  isArmed: boolean;
-  isHighlighted: boolean;
-  canWrite: boolean;
-  onStartEditing: () => void;
-  onStopEditing: () => void;
-  onSave: (day: string, time: string, nameRaw: string) => void;
-  onArm: (timeKey: string) => void;
-  onConfirmRemove: (day: string, time: string) => void;
+  suggestions: Suggestion[];
 
-  // ✅ iPhone keyboard safety: ensure focused input is visible
-  onRevealFocus: (day: string, time: string, inputEl: HTMLInputElement) => void;
+  // --- Simple mode (used by the iOS pager view) ---
+  onChange?: (value: string) => void;
+
+  // --- Rich mode (existing day editor) ---
+  dayISO?: string;
+  canWrite?: boolean;
+  onSave?: (dayISO: string, time: string, value: string) => void;
+  isSaved?: boolean;
+
+  armedRemoveKey?: string | null;
+  setArmedRemoveKey?: (k: string | null) => void;
+  onRequestRemove?: (dayISO: string, time: string) => void;
+  onRequestSuggest?: (dayISO: string, time: string) => void;
+
+  // ✅ iPhone keyboard safe-area logic
+  onFocusChanged?: (isFocused: boolean) => void;
 };
+
 
 // Lightweight row used by the iOS-native pager day view.
 // It is intentionally simple so iOS scroll and swipe don't fight each other.
@@ -273,105 +280,170 @@ const SlotRowLite = ({ time, value, suggestions, onChange }: SlotRowLiteProps) =
 };
 
 const SlotRow = React.memo(
-  function SlotRow({
-    dayISO,
+  function SlotRow(props: SlotRowProps) {
+  const {
     time,
     value,
-    isSaved,
-    isArmed,
-    isHighlighted,
+    suggestions,
+    onChange,
+
+    dayISO,
     canWrite,
-    onStartEditing,
-    onStopEditing,
     onSave,
-    onArm,
-    onConfirmRemove,
-    onRevealFocus,
-  }: SlotRowProps) {
-    const hasName = (value || '').trim().length > 0;
-    const timeKey = `${dayISO}_${time}`;
-    const inputId = slotInputId(dayISO, time);
+    isSaved,
+    armedRemoveKey,
+    setArmedRemoveKey,
+    onRequestRemove,
+    onRequestSuggest,
+    onFocusChanged,
+  } = props;
 
+  // Local draft + debounce so we don't spam saves on every keystroke.
+  const [draft, setDraft] = React.useState(value);
+  const debounceRef = React.useRef<number | null>(null);
+
+  React.useEffect(() => {
+    setDraft(value);
+  }, [value]);
+
+  const flush = React.useCallback(
+    (next?: string) => {
+      const v = typeof next === 'string' ? next : draft;
+      if (debounceRef.current) window.clearTimeout(debounceRef.current);
+      debounceRef.current = null;
+
+      if (typeof onChange === 'function') {
+        onChange(v);
+        return;
+      }
+      if (typeof onSave === 'function' && dayISO) {
+        onSave(dayISO, time, v);
+      }
+    },
+    [draft, onChange, onSave, dayISO, time],
+  );
+
+  const schedule = (next: string) => {
+    setDraft(next);
+    if (debounceRef.current) window.clearTimeout(debounceRef.current);
+    debounceRef.current = window.setTimeout(() => flush(next), 260);
+  };
+
+  // -------------------------
+  // Simple mode (Pager): no "armed delete", no suggest/remove buttons.
+  // -------------------------
+  if (typeof onChange === 'function' && typeof onSave !== 'function') {
     return (
-      <div
-        className={`relative rounded-2xl bg-neutral-900/80 border px-3 py-1 flex items-center gap-3 overflow-hidden transition ${
-          isHighlighted ? 'border-white/60 ring-2 ring-white/20' : 'border-neutral-800'
-        }`}
-        style={isHighlighted ? { animation: 'bushiPulse 220ms ease-in-out infinite alternate' } : undefined}
-      >
-        <div
-          className="text-[1.05rem] md:text-[1.15rem] font-semibold tabular-nums min-w-[4.9rem] text-center select-none"
-          style={{ fontFamily: BRAND.fontBody }}
-        >
-          {time}
-        </div>
+      <div className="flex items-center gap-2">
+        <div className="w-[64px] shrink-0 text-sm text-neutral-300">{time}</div>
 
-        <div className="flex-1 min-w-0 flex items-center gap-2">
-          <input
-            id={inputId}
-            key={timeKey + value}
-            defaultValue={value}
-            onFocus={(e) => {
-              e.currentTarget.dataset.orig = e.currentTarget.value;
-              onStartEditing();
-              // ✅ keep it visible above the iPhone keyboard
-              onRevealFocus(dayISO, time, e.currentTarget);
-            }}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                const el = e.target as HTMLInputElement;
-                const v = el.value;
-                el.dataset.orig = v;
-                if (canWrite) onSave(dayISO, time, v);
-                el.blur();
-              }
-            }}
-            onBlur={(e) => {
-              const el = e.currentTarget;
-              const orig = (el.dataset.orig ?? '').trim();
-              const now = (el.value ?? '').trim();
-
-              window.setTimeout(onStopEditing, 120);
-              if (!canWrite) return;
-              if (orig === now) return;
-
-              el.dataset.orig = el.value;
-              onSave(dayISO, time, el.value);
-            }}
-            className="block w-full text-white bg-[rgb(10,10,10)] border border-neutral-700/70 focus:border-white/70 focus:outline-none focus:ring-0 rounded-lg px-3 py-1.5 text-center transition-all duration-200"
-            style={{ fontFamily: BRAND.fontBody }}
-          />
-
-          {hasName && (
-            <button
-              onClick={() => (isArmed ? onConfirmRemove(dayISO, time) : onArm(timeKey))}
-              className={`shrink-0 w-8 h-8 md:w-9 md:h-9 rounded-lg grid place-items-center transition border ${
-                isArmed
-                  ? 'bg-red-900/30 border-red-600/70'
-                  : 'bg-neutral-900/60 hover:bg-neutral-800/70 border-neutral-700/50'
-              }`}
-              aria-label={isArmed ? 'Потвърди' : 'Премахни'}
-              title={isArmed ? 'Потвърди' : 'Премахни'}
-            >
-              <img
-                src={isArmed ? '/tick-green.png' : '/razor.png'}
-                alt={isArmed ? 'Confirm' : 'Remove'}
-                className="w-4 h-4 md:w-5 md:h-5 object-contain"
-              />
-            </button>
-          )}
-        </div>
-
-        <img
-          src="/tick-green.png"
-          alt="saved"
-          className={`pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 md:w-6 md:h-6 transition-opacity duration-300 ${
-            isSaved ? 'opacity-100' : 'opacity-0'
-          }`}
+        <input
+          value={draft}
+          onChange={(e) => schedule(e.target.value)}
+          onBlur={() => flush()}
+          placeholder="—"
+          className="flex-1 rounded-xl border border-neutral-700 bg-neutral-950/60 px-3 py-2 text-[15px] text-neutral-100 outline-none focus:border-neutral-500"
+          inputMode="text"
+          autoCorrect="off"
+          autoCapitalize="none"
+          onFocus={() => onFocusChanged?.(true)}
+          onBlurCapture={() => onFocusChanged?.(false)}
+          list={suggestions.length ? `sug-${time}` : undefined}
         />
+
+        {suggestions.length ? (
+          <datalist id={`sug-${time}`}>
+            {suggestions.map((s) => (
+              <option key={s} value={s} />
+            ))}
+          </datalist>
+        ) : null}
       </div>
     );
-  },
+  }
+
+  // -------------------------
+  // Rich mode (Original): keeps your existing "armed delete" UX.
+  // -------------------------
+  const rowKey = `${dayISO || ''}__${time}`;
+  const isArmed = !!armedRemoveKey && armedRemoveKey === rowKey;
+
+  return (
+    <div className="flex items-center gap-2">
+      <div className="w-[64px] shrink-0 text-sm text-neutral-300">{time}</div>
+
+      <input
+        value={draft}
+        onChange={(e) => schedule(e.target.value)}
+        onBlur={() => flush()}
+        placeholder="—"
+        className="flex-1 rounded-xl border border-neutral-700 bg-neutral-950/60 px-3 py-2 text-[15px] text-neutral-100 outline-none focus:border-neutral-500"
+        inputMode="text"
+        autoCorrect="off"
+        autoCapitalize="none"
+        disabled={!canWrite}
+        onFocus={() => onFocusChanged?.(true)}
+        onBlurCapture={() => onFocusChanged?.(false)}
+        list={suggestions.length ? `sug-${rowKey}` : undefined}
+      />
+
+      {suggestions.length ? (
+        <datalist id={`sug-${rowKey}`}>
+          {suggestions.map((s) => (
+            <option key={s} value={s} />
+          ))}
+        </datalist>
+      ) : null}
+
+      {/* Suggest */}
+      <button
+        type="button"
+        className="hidden sm:inline-flex items-center justify-center h-10 px-3 rounded-xl border border-neutral-700 bg-neutral-900/60 hover:bg-neutral-800 text-neutral-200 text-sm"
+        onMouseDown={(e) => e.stopPropagation()}
+        onTouchStart={(e) => e.stopPropagation()}
+        onClick={() => dayISO && onRequestSuggest?.(dayISO, time)}
+        title="Suggestions"
+      >
+        ✦
+      </button>
+
+      {/* Delete (armed) */}
+      <button
+        type="button"
+        className={`inline-flex items-center justify-center h-10 px-3 rounded-xl border text-sm ${
+          isArmed
+            ? 'border-red-500 bg-red-600/20 text-red-200'
+            : 'border-neutral-700 bg-neutral-900/60 hover:bg-neutral-800 text-neutral-200'
+        }`}
+        onMouseDown={(e) => e.stopPropagation()}
+        onTouchStart={(e) => e.stopPropagation()}
+        onClick={() => {
+          if (!dayISO) return;
+          if (!setArmedRemoveKey) return;
+
+          if (!isArmed) {
+            setArmedRemoveKey(rowKey);
+            window.setTimeout(() => setArmedRemoveKey(null), 1600);
+            return;
+          }
+          setArmedRemoveKey(null);
+          onRequestRemove?.(dayISO, time);
+        }}
+        title={isArmed ? 'Tap again to delete' : 'Delete'}
+      >
+        {isArmed ? 'Delete?' : '🗑'}
+      </button>
+
+      {/* Saved dot */}
+      <div
+        className="w-3 h-3 shrink-0 rounded-full bg-emerald-400/80 transition-opacity duration-300"
+        style={{ opacity: isSaved ? 1 : 0 }}
+      />
+    </div>
+  );
+}
+
+,
   (prev, next) =>
     prev.value === next.value &&
     prev.isSaved === next.isSaved &&
@@ -943,6 +1015,12 @@ const onDayPagerScroll = useCallback(() => {
     }
     setSelectedDate(d);
   };
+
+  // Thin wrapper used by the iOS pager day-editor (keeps the JSX simple)
+  const updateSlot = (dayISO: string, time: string, value: string) => {
+    void saveName(dayISO, time, value);
+  };
+
 
   // Closest available (today -> future)
   type AvailHit = { dayISO: string; time: string };
