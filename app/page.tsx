@@ -562,50 +562,34 @@ function BarberCalendarCore() {
   const [savedPulse, setSavedPulse] = useState<{ day: string; time: string; ts: number } | null>(null);
 
   // Day editor scroll container ref (for swipe-anywhere w/ scroll-safe gesture lock)
-  const slotsScrollRef = useRef<HTMLDivElement | null>(null);
+  
+  // =============================================================================
+  // Day editor gestures (SWIPE ANYWHERE + ALWAYS SCROLL FRIENDLY)
+  //
+  // iOS Safari often breaks scrolling if a non-passive touchmove exists on the scroll area.
+  // So we do a "decision on release":
+  // - We NEVER preventDefault() on the scroll container (scroll stays native).
+  // - We record the gesture path and on release:
+  //     if it is clearly horizontal (absX big + dominates absY) -> change day.
+  //     otherwise -> treat as normal scroll/tap.
+  //
+  // Works on iPhone + Android, while keeping vertical scroll 100% native.
+  // =============================================================================
 
-  // Swipe gestures (day editor)
   const swipeStartX = useRef<number | null>(null);
   const swipeStartY = useRef<number | null>(null);
-  const swipeDX = useRef<number>(0);
-  const swipeDY = useRef<number>(0);
+  const swipeLastX = useRef<number>(0);
+  const swipeLastY = useRef<number>(0);
 
-  const [swipeStyle, setSwipeStyle] = useState<React.CSSProperties>({});
-  const [panelStyle, setPanelStyle] = useState<React.CSSProperties>({});
-  const gestureModeRef = useRef<'none' | 'horizontal' | 'vertical'>('none');
-
-  // ✅ iPhone scroll vs swipe tuning:
-  // - Make horizontal swipe less sensitive so vertical scrolling wins.
-  const SWIPE_THRESHOLD = 52; // was 52
-  const VERTICAL_CLOSE_THRESHOLD = 95;
-  const SNAP_EASE = 'cubic-bezier(0.25, 0.9, 0.25, 1)';
-
-  const H_DRAG_CLAMP = 220;
-  const V_DRAG_CLAMP = 240;
-
-  // intent thresholds (helps iPhone scrolling)
-  const H_INTENT_SLOP = 18;
-  const V_INTENT_SLOP = 10;
-  const INTENT_RATIO = 1.35;
-
-  const isTabletOrBigger = () =>
-    typeof window !== 'undefined' &&
-    (window.matchMedia ? window.matchMedia('(min-width: 768px)').matches : window.innerWidth >= 768);
-
-  useEffect(() => {
-    setSwipeStyle({});
-    setPanelStyle({});
-    gestureModeRef.current = 'none';
-    setArmedRemove(null);
-    clearArmedTimeout();
-  }, [selectedDate, clearArmedTimeout]);
-
-  useEffect(() => () => clearArmedTimeout(), [clearArmedTimeout]);
+  const SWIPE_THRESHOLD = 72; // px
+  const SWIPE_DOMINANCE = 1.25; // absX must be this much bigger than absY
 
   const shiftSelectedDay = (delta: number) => {
     setSelectedDate((prev) => {
       if (!prev) return prev;
       const next = addDays(prev, delta);
+
+      // keep month header synced if we cross month boundaries
       if (next.getFullYear() !== viewYear || next.getMonth() !== viewMonth) {
         setViewYear(next.getFullYear());
         setViewMonth(next.getMonth());
@@ -614,276 +598,44 @@ function BarberCalendarCore() {
     });
   };
 
+  // No drag animation (keeps iOS scrolling perfect). Instant day shift on release.
   const animateShift = (delta: number) => {
-    setSwipeStyle({
-      transform: `translateX(${delta > 0 ? -22 : 22}px)`,
-      opacity: 0.55,
-      transition: `transform 140ms ${SNAP_EASE}, opacity 140ms ${SNAP_EASE}`,
-    });
-    setTimeout(() => {
-      shiftSelectedDay(delta);
-      setSwipeStyle({
-        transform: `translateX(${delta > 0 ? 22 : -22}px)`,
-        opacity: 0.55,
-        transition: 'none',
-      });
-      requestAnimationFrame(() => {
-        setSwipeStyle({
-          transform: 'translateX(0)',
-          opacity: 1,
-          transition: `transform 160ms ${SNAP_EASE}, opacity 160ms ${SNAP_EASE}`,
-        });
-      });
-    }, 140);
+    shiftSelectedDay(delta);
   };
 
-
-// =============================================================================
-// iPhone FIX (scroll + swipe-anywhere):
-// We attach PASSIVE touch listeners to the scroll container so iOS keeps native scrolling.
-// Only when we confidently lock into a horizontal gesture, we attach a temporary
-// document-level touchmove listener with {passive:false} to preventDefault() and drive the swipe.
-// =============================================================================
-useEffect(() => {
-  if (!selectedDate) return;
-  const el = slotsScrollRef.current;
-  if (!el) return;
-
-  let startX: number | null = null;
-  let startY: number | null = null;
-  let dx = 0;
-  let dy = 0;
-  let mode: 'none' | 'horizontal' | 'vertical' = 'none';
-  let docMoveAttached = false;
-
-  const isInteractive = (t: EventTarget | null) => {
-    const node = t as HTMLElement | null;
-    if (!node) return false;
-    const tag = node.tagName?.toLowerCase?.();
-    if (tag === 'input' || tag === 'textarea' || tag === 'select' || tag === 'button') return true;
-    if (node.closest?.('input,textarea,select,button')) return true;
-    return false;
+  const beginSwipeTrack = (x: number, y: number) => {
+    swipeStartX.current = x;
+    swipeStartY.current = y;
+    swipeLastX.current = x;
+    swipeLastY.current = y;
   };
 
-  const detachDocMove = () => {
-    if (!docMoveAttached) return;
-    document.removeEventListener('touchmove', onDocMove as any);
-    docMoveAttached = false;
+  const moveSwipeTrack = (x: number, y: number) => {
+    swipeLastX.current = x;
+    swipeLastY.current = y;
   };
 
-  const onDocMove = (e: TouchEvent) => {
-    if (mode !== 'horizontal' || startX == null || startY == null) return;
+  const endSwipeTrack = () => {
+    if (swipeStartX.current == null || swipeStartY.current == null) return;
 
-    // Stop iOS scroll only while horizontally swiping
-    e.preventDefault();
-
-    // Compute directly from the current finger position (more reliable on iOS)
-    const dxRaw = e.touches[0].clientX - startX;
-    const dyRaw = e.touches[0].clientY - startY;
-    dx = dxRaw;
-    dy = dyRaw;
-
-    const clamped = clamp(dxRaw, -H_DRAG_CLAMP, H_DRAG_CLAMP);
-    setSwipeStyle({ transform: `translateX(${clamped}px)`, transition: 'none' });
-  };
-
-  const onStart = (e: TouchEvent) => {
-    if (e.touches.length !== 1) return;
-    if (isInteractive(e.target)) return;
-
-    startX = e.touches[0].clientX;
-    startY = e.touches[0].clientY;
-    dx = 0;
-    dy = 0;
-    mode = 'none';
-    detachDocMove();
-  };
-
-  const onMovePassive = (e: TouchEvent) => {
-    if (startX == null || startY == null) return;
-
-    const x = e.touches[0].clientX;
-    const y = e.touches[0].clientY;
-    dx = x - startX;
-    dy = y - startY;
+    const dx = swipeLastX.current - swipeStartX.current;
+    const dy = swipeLastY.current - swipeStartY.current;
 
     const ax = Math.abs(dx);
     const ay = Math.abs(dy);
 
-    if (mode === 'none') {
-      // Let vertical scrolling win, but don't steal diagonal swipes too early
-      if (ay > 14 && ay > ax * 1.10) {
-        mode = 'vertical';
-        return;
-      }
-
-      // Horizontal lock: easier to trigger (works better on iPhone + Android)
-      if (ax > 16 && ax > ay * 1.10) {
-        mode = 'horizontal';
-        if (!docMoveAttached) {
-          document.addEventListener('touchmove', onDocMove as any, { passive: false });
-          docMoveAttached = true;
-        }
-        // immediately render first frame
-        const clamped = clamp(dx, -H_DRAG_CLAMP, H_DRAG_CLAMP);
-        setSwipeStyle({ transform: `translateX(${clamped}px)`, transition: 'none' });
-        return;
-      }
-
-      return;
-    }
-
-    // vertical: do nothing, native scroll continues
-    // horizontal: doc handler runs
-  };
-
-  const finish = () => {
-    if (startX == null) return;
-
-    if (mode === 'horizontal') {
-      if (Math.abs(dx) >= SWIPE_THRESHOLD) {
-        // swipe right => previous day, swipe left => next day
-        animateShift(dx > 0 ? -1 : 1);
-      } else {
-        setSwipeStyle({ transform: 'translateX(0)', transition: `transform 170ms ${SNAP_EASE}` });
-      }
-    }
-
-    startX = null;
-    startY = null;
-    dx = 0;
-    dy = 0;
-    mode = 'none';
-    detachDocMove();
-  };
-
-  el.addEventListener('touchstart', onStart, { passive: true });
-  el.addEventListener('touchmove', onMovePassive, { passive: true });
-  el.addEventListener('touchend', finish, { passive: true });
-  el.addEventListener('touchcancel', finish, { passive: true });
-
-  return () => {
-    el.removeEventListener('touchstart', onStart as any);
-    el.removeEventListener('touchmove', onMovePassive as any);
-    el.removeEventListener('touchend', finish as any);
-    el.removeEventListener('touchcancel', finish as any);
-    detachDocMove();
-  };
-}, [selectedDate, animateShift]);
-
-
-  const animateCloseDown = () => {
-    setPanelStyle({
-      transform: 'translateY(160px)',
-      opacity: 0,
-      transition: `transform 170ms ${SNAP_EASE}, opacity 150ms ${SNAP_EASE}`,
-    });
-    setTimeout(() => {
-      setSelectedDate(null);
-      setPanelStyle({});
-      setSwipeStyle({});
-      gestureModeRef.current = 'none';
-      setPendingFocus(null);
-    }, 170);
-  };
-
-  const onTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
-    swipeStartX.current = e.touches[0].clientX;
-    swipeStartY.current = e.touches[0].clientY;
-    swipeDX.current = 0;
-    swipeDY.current = 0;
-    gestureModeRef.current = 'none';
-    setSwipeStyle({ transition: 'none' });
-    setPanelStyle({ transition: 'none', transform: 'translateY(0)', opacity: 1 });
-  };
-
-  const onTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
-    if (swipeStartX.current == null || swipeStartY.current == null) return;
-
-    const dxRaw = e.touches[0].clientX - swipeStartX.current;
-    const dyRaw = e.touches[0].clientY - swipeStartY.current;
-
-    swipeDX.current = dxRaw;
-    swipeDY.current = dyRaw;
-
-    const absX = Math.abs(dxRaw);
-    const absY = Math.abs(dyRaw);
-
-    if (gestureModeRef.current === 'none') {
-      // If it looks like a scroll, let the browser scroll (do NOT capture swipe).
-      if (absY >= V_INTENT_SLOP && absY > absX * 1.05) {
-        return;
-      }
-
-      // Only start horizontal swipe if clearly horizontal AND moved enough.
-      if (absX >= H_INTENT_SLOP && absX > absY * INTENT_RATIO) {
-        gestureModeRef.current = 'horizontal';
-      } else {
-        return;
-      }
-
-      // Optional: allow vertical close on tablet when clearly vertical-down
-      if (isTabletOrBigger() && dyRaw > 0 && absY > absX * 1.2) {
-        gestureModeRef.current = 'vertical';
-      }
-    }
-
-    if (gestureModeRef.current === 'vertical') {
-      const dy = clamp(Math.max(dyRaw, 0), 0, V_DRAG_CLAMP);
-      const opacity = Math.max(0.75, 1 - dy / 640);
-      setPanelStyle({ transform: `translateY(${dy}px)`, opacity, transition: 'none' });
-      setSwipeStyle({ transform: 'translateX(0)', transition: 'none' });
-      return;
-    }
-
-    if (gestureModeRef.current === 'horizontal') {
-      const dx = clamp(dxRaw, -H_DRAG_CLAMP, H_DRAG_CLAMP);
-      setSwipeStyle({ transform: `translateX(${dx}px)`, transition: 'none' });
-    }
-  };
-
-  const onTouchEnd = () => {
-    if (swipeStartX.current == null) return;
-
-    const dx = swipeDX.current;
-    const dy = swipeDY.current;
-
+    // reset first (so multiple ends can't fire twice)
     swipeStartX.current = null;
     swipeStartY.current = null;
-    swipeDX.current = 0;
-    swipeDY.current = 0;
 
-    if (gestureModeRef.current === 'vertical') {
-      if (isTabletOrBigger() && dy >= VERTICAL_CLOSE_THRESHOLD) {
-        animateCloseDown();
-      } else {
-        setPanelStyle({
-          transform: 'translateY(0)',
-          opacity: 1,
-          transition: `transform 160ms ${SNAP_EASE}, opacity 140ms ${SNAP_EASE}`,
-        });
-        setTimeout(() => setPanelStyle({}), 160);
-      }
-      gestureModeRef.current = 'none';
-      return;
+    // Only trigger when clearly horizontal
+    if (ax >= SWIPE_THRESHOLD && ax >= ay * SWIPE_DOMINANCE) {
+      // Swipe LEFT -> next day, Swipe RIGHT -> previous day
+      animateShift(dx > 0 ? -1 : 1);
     }
-
-    if (gestureModeRef.current === 'horizontal') {
-      if (Math.abs(dx) >= SWIPE_THRESHOLD) {
-        animateShift(dx > 0 ? -1 : 1);
-      } else {
-        setSwipeStyle({ transform: 'translateX(0)', transition: `transform 170ms ${SNAP_EASE}` });
-      }
-      gestureModeRef.current = 'none';
-      return;
-    }
-
-    setSwipeStyle({ transform: 'translateX(0)', transition: `transform 160ms ${SNAP_EASE}` });
-    setPanelStyle({ transform: 'translateY(0)', opacity: 1, transition: `transform 160ms ${SNAP_EASE}, opacity 160ms ${SNAP_EASE}` });
-    setTimeout(() => setPanelStyle({}), 160);
   };
 
-  // SAVE / DELETE (SAFE PATCH)
+// SAVE / DELETE (SAFE PATCH)
   const saveName = useCallback(
     (day: string, time: string, nameRaw: string) => {
       if (!remoteReady) return;
@@ -1670,15 +1422,39 @@ useEffect(() => {
 
               {/* Slots */}
               <div
-  ref={slotsScrollRef}
-  className="mt-4 flex-1 overflow-y-auto md:overflow-visible"
-  style={{
-    ...swipeStyle,
-    touchAction: 'pan-y',
-    WebkitOverflowScrolling: 'touch',
-    paddingBottom: keyboardInset ? `${keyboardInset}px` : undefined,
-  }}
->
+                className="mt-4 flex-1 overflow-y-auto md:overflow-visible"
+                onTouchStart={(e) => {
+                  // allow typing targets to behave normally
+                  const t = e.target as any;
+                  const tag = (t?.tagName || '').toLowerCase();
+                  if (tag === 'input' || tag === 'textarea' || tag === 'select' || tag === 'button' || t?.closest?.('input,textarea,select,button')) return;
+                  beginSwipeTrack(e.touches[0].clientX, e.touches[0].clientY);
+                }}
+                onTouchMove={(e) => {
+                  if (swipeStartX.current == null) return;
+                  moveSwipeTrack(e.touches[0].clientX, e.touches[0].clientY);
+                }}
+                onTouchEnd={() => endSwipeTrack()}
+                onTouchCancel={() => endSwipeTrack()}
+                onPointerDown={(e) => {
+                  // Pointer events work great on Android/desktop
+                  const t = e.target as any;
+                  const tag = (t?.tagName || '').toLowerCase();
+                  if (tag === 'input' || tag === 'textarea' || tag === 'select' || tag === 'button' || t?.closest?.('input,textarea,select,button')) return;
+                  beginSwipeTrack(e.clientX, e.clientY);
+                }}
+                onPointerMove={(e) => {
+                  if (swipeStartX.current == null) return;
+                  moveSwipeTrack(e.clientX, e.clientY);
+                }}
+                onPointerUp={() => endSwipeTrack()}
+                onPointerCancel={() => endSwipeTrack()}
+                style={{
+                  touchAction: 'pan-y',
+                  paddingBottom: keyboardInset ? `${keyboardInset}px` : undefined,
+                  WebkitOverflowScrolling: 'touch',
+                }}
+              >
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5" style={{ gridAutoRows: 'minmax(32px,1fr)' }}>
                   {DAY_SLOTS.map((time) => {
                     const value = (selectedDayMap as Record<string, string>)[time] || '';
