@@ -637,6 +637,126 @@ function BarberCalendarCore() {
     }, 140);
   };
 
+
+// =============================================================================
+// iPhone FIX (scroll + swipe-anywhere):
+// We attach PASSIVE touch listeners to the scroll container so iOS keeps native scrolling.
+// Only when we confidently lock into a horizontal gesture, we attach a temporary
+// document-level touchmove listener with {passive:false} to preventDefault() and drive the swipe.
+// =============================================================================
+useEffect(() => {
+  if (!selectedDate) return;
+  const el = slotsScrollRef.current;
+  if (!el) return;
+
+  let startX: number | null = null;
+  let startY: number | null = null;
+  let dx = 0;
+  let dy = 0;
+  let mode: 'none' | 'horizontal' | 'vertical' = 'none';
+  let docMoveAttached = false;
+
+  const isInteractive = (t: EventTarget | null) => {
+    const node = t as HTMLElement | null;
+    if (!node) return false;
+    const tag = node.tagName?.toLowerCase?.();
+    if (tag === 'input' || tag === 'textarea' || tag === 'select' || tag === 'button') return true;
+    if (node.closest?.('input,textarea,select,button')) return true;
+    return false;
+  };
+
+  const detachDocMove = () => {
+    if (!docMoveAttached) return;
+    document.removeEventListener('touchmove', onDocMove as any);
+    docMoveAttached = false;
+  };
+
+  const onDocMove = (e: TouchEvent) => {
+    if (mode !== 'horizontal' || startX == null || startY == null) return;
+    // Stop iOS scroll only while horizontally swiping
+    e.preventDefault();
+    const clamped = clamp(dx, -H_DRAG_CLAMP, H_DRAG_CLAMP);
+    setSwipeStyle({ transform: `translateX(${clamped}px)`, transition: 'none' });
+  };
+
+  const onStart = (e: TouchEvent) => {
+    if (e.touches.length !== 1) return;
+    if (isInteractive(e.target)) return;
+
+    startX = e.touches[0].clientX;
+    startY = e.touches[0].clientY;
+    dx = 0;
+    dy = 0;
+    mode = 'none';
+    detachDocMove();
+  };
+
+  const onMovePassive = (e: TouchEvent) => {
+    if (startX == null || startY == null) return;
+
+    const x = e.touches[0].clientX;
+    const y = e.touches[0].clientY;
+    dx = x - startX;
+    dy = y - startY;
+
+    const ax = Math.abs(dx);
+    const ay = Math.abs(dy);
+
+    if (mode === 'none') {
+      // Let vertical scrolling win unless it's clearly horizontal
+      if (ay > 10 && ay > ax) {
+        mode = 'vertical';
+        return;
+      }
+      // Stricter horizontal lock for iPhone Safari
+      if (ax > 22 && ax > ay * 1.45) {
+        mode = 'horizontal';
+        document.addEventListener('touchmove', onDocMove as any, { passive: false });
+        docMoveAttached = true;
+        return;
+      }
+      return;
+    }
+
+    // vertical: do nothing, native scroll continues
+    // horizontal: doc handler runs
+  };
+
+  const finish = () => {
+    if (startX == null) return;
+
+    if (mode === 'horizontal') {
+      if (Math.abs(dx) >= SWIPE_THRESHOLD) {
+        // swipe right => previous day, swipe left => next day
+        animateShift(dx > 0 ? -1 : 1);
+      } else {
+        setSwipeStyle({ transform: 'translateX(0)', transition: `transform 170ms ${SNAP_EASE}` });
+      }
+    }
+
+    startX = null;
+    startY = null;
+    dx = 0;
+    dy = 0;
+    mode = 'none';
+    detachDocMove();
+  };
+
+  el.addEventListener('touchstart', onStart, { passive: true });
+  el.addEventListener('touchmove', onMovePassive, { passive: true });
+  el.addEventListener('touchend', finish, { passive: true });
+  el.addEventListener('touchcancel', finish, { passive: true });
+
+  return () => {
+    el.removeEventListener('touchstart', onStart as any);
+    el.removeEventListener('touchmove', onMovePassive as any);
+    el.removeEventListener('touchend', finish as any);
+    el.removeEventListener('touchcancel', finish as any);
+    detachDocMove();
+  };
+}, [selectedDate, animateShift]);
+
+
   const animateCloseDown = () => {
     setPanelStyle({
       transform: 'translateY(160px)',
@@ -1535,17 +1655,15 @@ function BarberCalendarCore() {
 
               {/* Slots */}
               <div
-                className="mt-4 flex-1 overflow-y-auto md:overflow-visible"
-                onTouchStart={onTouchStart}
-                onTouchMove={onTouchMove}
-                onTouchEnd={onTouchEnd}
-                onTouchCancel={onTouchEnd}
-                style={{
-                  ...swipeStyle,
-                  touchAction: 'pan-y',
-                  paddingBottom: keyboardInset ? `${keyboardInset}px` : undefined,
-                }}
-              >
+  ref={slotsScrollRef}
+  className="mt-4 flex-1 overflow-y-auto md:overflow-visible"
+  style={{
+    ...swipeStyle,
+    touchAction: 'pan-y',
+    WebkitOverflowScrolling: 'touch',
+    paddingBottom: keyboardInset ? `${keyboardInset}px` : undefined,
+  }}
+>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5" style={{ gridAutoRows: 'minmax(32px,1fr)' }}>
                   {DAY_SLOTS.map((time) => {
                     const value = (selectedDayMap as Record<string, string>)[time] || '';
