@@ -836,6 +836,8 @@ function BarberCalendarCore() {
     'w-14 md:w-16 h-10 md:h-11 rounded-2xl border border-neutral-700/70 bg-neutral-900/65 hover:bg-neutral-800/75 transition grid place-items-center shadow-[0_14px_40px_rgba(0,0,0,0.75)]';
   const weekendEmojiClass = 'text-[18px] md:text-[20px] leading-none';
 
+  const SNAP_EASE = 'cubic-bezier(0.25, 0.9, 0.25, 1)';
+
   // Month swipe gestures (main month view)
   const monthStartX = useRef<number | null>(null);
   const monthStartY = useRef<number | null>(null);
