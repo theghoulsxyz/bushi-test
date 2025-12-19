@@ -584,6 +584,17 @@ function BarberCalendarCore() {
   const swipeLastX = useRef<number>(0);
   const swipeLastY = useRef<number>(0);
 
+  const [panelStyle, setPanelStyle] = useState<React.CSSProperties>({});
+  const [swipeStyle, setSwipeStyle] = useState<React.CSSProperties>({});
+
+  const animateCloseDown = () => {
+    // Reliable close for all devices (tap outside still works too)
+    setSelectedDate(null);
+    setPanelStyle({});
+    setSwipeStyle({});
+  };
+
+
   const SWIPE_THRESHOLD = 72; // px
   const SWIPE_DOMINANCE = 1.25; // absX must be this much bigger than absY
 
