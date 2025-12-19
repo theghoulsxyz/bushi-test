@@ -235,6 +235,43 @@ type SlotRowProps = {
   onRevealFocus: (day: string, time: string, inputEl: HTMLInputElement) => void;
 };
 
+// Lightweight row used by the iOS-native pager day view.
+// It is intentionally simple so iOS scroll and swipe don't fight each other.
+type SlotRowLiteProps = {
+  time: string;
+  value: string;
+  suggestions: string[];
+  onChange: (next: string) => void;
+};
+
+const SlotRowLite = ({ time, value, suggestions, onChange }: SlotRowLiteProps) => {
+  const listId = `bushi-suggestions-${time.replace(/[^0-9]/g, '')}`;
+  return (
+    <div className="grid grid-cols-[72px,1fr] gap-2 items-center">
+      <div className="text-xs text-neutral-300 tabular-nums">{time}</div>
+      <div className="relative">
+        <input
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          list={suggestions.length ? listId : undefined}
+          placeholder="Име"
+          className="w-full rounded-lg border border-neutral-700 bg-neutral-950/60 px-3 py-2 text-sm text-neutral-100 outline-none focus:border-neutral-500"
+          autoCapitalize="words"
+          autoComplete="off"
+          inputMode="text"
+        />
+        {suggestions.length ? (
+          <datalist id={listId}>
+            {suggestions.map((s) => (
+              <option key={s} value={s} />
+            ))}
+          </datalist>
+        ) : null}
+      </div>
+    </div>
+  );
+};
+
 const SlotRow = React.memo(
   function SlotRow({
     dayISO,
@@ -1613,7 +1650,7 @@ const onDayPagerScroll = useCallback(() => {
       >
         <div className="grid gap-2">
           {DAY_SLOTS.map((t) => (
-            <SlotRow
+            <SlotRowLite
               key={t}
               time={t}
               value={p.map[t] || ''}
