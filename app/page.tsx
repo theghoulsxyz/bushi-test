@@ -569,7 +569,7 @@ function BarberCalendarCore() {
 
   const [swipeStyle, setSwipeStyle] = useState<React.CSSProperties>({});
   const [panelStyle, setPanelStyle] = useState<React.CSSProperties>({});
-  const gestureModeRef = useRef<'none' | 'horizontal' | 'vertical'>('none');
+  const gestureModeRef = useRef<'none' | 'horizontal' | 'vertical' | 'scroll'>('none');
 
   // ✅ iPhone scroll vs swipe tuning:
   // - Make horizontal swipe less sensitive so vertical scrolling wins.
@@ -581,9 +581,9 @@ function BarberCalendarCore() {
   const V_DRAG_CLAMP = 240;
 
   // intent thresholds (helps iPhone scrolling)
-  const H_INTENT_SLOP = 18;
+  const H_INTENT_SLOP = 26;
   const V_INTENT_SLOP = 10;
-  const INTENT_RATIO = 1.35;
+  const INTENT_RATIO = 1.6;
 
   const isTabletOrBigger = () =>
     typeof window !== 'undefined' &&
@@ -650,11 +650,18 @@ function BarberCalendarCore() {
   };
 
   const onTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
-    swipeStartX.current = e.touches[0].clientX;
-    swipeStartY.current = e.touches[0].clientY;
+    // If the gesture starts on an input/textarea/etc, don't hijack the touch.
+    // This keeps vertical scrolling and text selection reliable on iOS.
+    swipeStartX.current = null;
+    swipeStartY.current = null;
     swipeDX.current = 0;
     swipeDY.current = 0;
     gestureModeRef.current = 'none';
+
+    if (isTypingTarget(e.target as Element | null)) return;
+
+    swipeStartX.current = e.touches[0].clientX;
+    swipeStartY.current = e.touches[0].clientY;
     setSwipeStyle({ transition: 'none' });
     setPanelStyle({ transition: 'none', transform: 'translateY(0)', opacity: 1 });
   };
@@ -671,9 +678,13 @@ function BarberCalendarCore() {
     const absX = Math.abs(dxRaw);
     const absY = Math.abs(dyRaw);
 
+    // If we already decided this gesture is a scroll, don't try to interpret it later.
+    if (gestureModeRef.current === 'scroll') return;
+
     if (gestureModeRef.current === 'none') {
-      // If it looks like a scroll, let the browser scroll (do NOT capture swipe).
-      if (absY >= V_INTENT_SLOP && absY > absX * 1.05) {
+      // If it looks like a scroll, lock to scroll mode and let the browser handle it.
+      if (absY >= V_INTENT_SLOP && absY > absX * 1.1) {
+        gestureModeRef.current = 'scroll';
         return;
       }
 
@@ -688,6 +699,14 @@ function BarberCalendarCore() {
       if (isTabletOrBigger() && dyRaw > 0 && absY > absX * 1.2) {
         gestureModeRef.current = 'vertical';
       }
+    }
+
+    // If it was a scroll gesture, do nothing (native scroll already happened).
+    if (gestureModeRef.current === 'scroll') {
+      gestureModeRef.current = 'none';
+      setSwipeStyle({});
+      setPanelStyle({});
+      return;
     }
 
     if (gestureModeRef.current === 'vertical') {
@@ -714,6 +733,14 @@ function BarberCalendarCore() {
     swipeStartY.current = null;
     swipeDX.current = 0;
     swipeDY.current = 0;
+
+    // If it was a scroll gesture, do nothing (native scroll already happened).
+    if (gestureModeRef.current === 'scroll') {
+      gestureModeRef.current = 'none';
+      setSwipeStyle({});
+      setPanelStyle({});
+      return;
+    }
 
     if (gestureModeRef.current === 'vertical') {
       if (isTabletOrBigger() && dy >= VERTICAL_CLOSE_THRESHOLD) {
@@ -1540,6 +1567,8 @@ function BarberCalendarCore() {
                 style={{
                   ...swipeStyle,
                   touchAction: 'pan-y',
+                  WebkitOverflowScrolling: 'touch',
+                  overscrollBehavior: 'contain',
                   paddingBottom: keyboardInset ? `${keyboardInset}px` : undefined,
                 }}
               >
