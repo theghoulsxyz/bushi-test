@@ -100,9 +100,7 @@ const slotInputId = (dayISO: string, time: string) => `slot_${dayISO.replace(/[^
 // Weekdays / Months (Bulgarian)
 // =============================================================================
 const WEEKDAYS_SHORT = ['Пон', 'Вто', 'Сря', 'Чет', 'Пет', 'Съб', 'Нед'];
-
 const WEEKDAYS_FULL = ['Понеделник', 'Вторник', 'Сряда', 'Четвъртък', 'Петък', 'Събота', 'Неделя'];
-
 const MONTHS = ['Януари', 'Февруари', 'Март', 'Април', 'Май', 'Юни', 'Юли', 'Август', 'Септември', 'Октомври', 'Ноември', 'Декември'];
 
 // =============================================================================
@@ -466,9 +464,13 @@ function BarberCalendarCore() {
 
   const revealFocus = useCallback((day: string, time: string, inputEl: HTMLInputElement) => {
     window.setTimeout(() => {
-      try { inputEl.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch {}
+      try {
+        inputEl.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      } catch {}
       window.setTimeout(() => {
-        try { inputEl.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch {}
+        try {
+          inputEl.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        } catch {}
       }, 140);
     }, 60);
   }, []);
@@ -543,39 +545,126 @@ function BarberCalendarCore() {
   const [panelStyle, setPanelStyle] = useState<React.CSSProperties>({});
 
   // ===========================================================================
-  // NATIVE SCROLL SNAP LOGIC (Day Swipe) — hardened for iOS Safari
+  // DAY SWIPE (iPhone-like) — easy trigger + NEVER skip 2 days
   // ===========================================================================
   const dayScrollerRef = useRef<HTMLDivElement>(null);
   const isShiftingRef = useRef(false);
   const dayCommitTimerRef = useRef<number | null>(null);
 
+  // hard lock to prevent double-commit (skipping 2 days)
+  const commitLockUntilRef = useRef(0);
+
+  const centerDayScroller = useCallback((behavior: 'auto' | 'smooth' = 'auto') => {
+    const sc = dayScrollerRef.current;
+    if (!sc) return;
+    const w = sc.clientWidth || sc.offsetWidth;
+    if (!w) return;
+    try {
+      if (behavior === 'smooth') sc.scrollTo({ left: w, behavior: 'smooth' });
+      else sc.scrollLeft = w;
+    } catch {
+      sc.scrollLeft = w;
+    }
+  }, []);
+
   const shiftSelectedDay = useCallback((delta: number) => {
     setSelectedDate((prev) => {
       if (!prev) return prev;
       const next = addDays(prev, delta);
-      // Always keep month header in sync with selected day
       setViewYear(next.getFullYear());
       setViewMonth(next.getMonth());
       return next;
     });
   }, []);
 
-  // Center on middle slide safely (iOS sometimes reports width 0 briefly)
+  const commitDaySwipe = useCallback(
+    (delta: number) => {
+      const now = Date.now();
+      commitLockUntilRef.current = now + 320; // prevents 2 commits per gesture
+      isShiftingRef.current = true;
+
+      // immediately re-center so we never show placeholder/blank
+      centerDayScroller('auto');
+
+      shiftSelectedDay(delta);
+    },
+    [centerDayScroller, shiftSelectedDay],
+  );
+
+  const decideAndCommitDay = useCallback(() => {
+    const sc = dayScrollerRef.current;
+    if (!sc) return;
+
+    const now = Date.now();
+    if (now < commitLockUntilRef.current) {
+      // keep it centered while locked
+      centerDayScroller('auto');
+      return;
+    }
+    if (isShiftingRef.current) return;
+
+    // If user is typing, don't change day (prevents accidental swipes)
+    if (editingRef.current || isSlotInputFocused()) {
+      centerDayScroller('smooth');
+      return;
+    }
+
+    const w = sc.clientWidth || sc.offsetWidth;
+    if (!w) return;
+
+    const x = sc.scrollLeft;
+    const center = w;
+    const deltaFromCenter = x - center;
+
+    // EASY TRIGGER THRESHOLD: about 22% of width (min 56px)
+    const THRESH = Math.max(56, Math.round(w * 0.22));
+
+    if (deltaFromCenter <= -THRESH) {
+      // swipe to previous day
+      commitDaySwipe(-1);
+      return;
+    }
+    if (deltaFromCenter >= THRESH) {
+      // swipe to next day
+      commitDaySwipe(+1);
+      return;
+    }
+
+    // not enough -> just snap back to center
+    centerDayScroller('smooth');
+  }, [centerDayScroller, commitDaySwipe, isSlotInputFocused]);
+
+  const scheduleDayCommit = useCallback(() => {
+    if (dayCommitTimerRef.current != null) window.clearTimeout(dayCommitTimerRef.current);
+
+    dayCommitTimerRef.current = window.setTimeout(() => {
+      dayCommitTimerRef.current = null;
+
+      const sc = dayScrollerRef.current;
+      if (!sc) return;
+
+      // wait until scroll is stable (iOS momentum)
+      const x1 = sc.scrollLeft;
+      requestAnimationFrame(() => {
+        const x2 = sc.scrollLeft;
+        if (Math.abs(x2 - x1) > 2) {
+          // still moving -> reschedule
+          scheduleDayCommit();
+          return;
+        }
+        decideAndCommitDay();
+      });
+    }, 80);
+  }, [decideAndCommitDay]);
+
+  // Center on middle slide when day changes, and keep a short lock
   useLayoutEffect(() => {
     if (!selectedDate) return;
-    const el = dayScrollerRef.current;
-    if (!el) return;
 
-    const centerNow = () => {
-      const w = el.clientWidth || el.offsetWidth;
-      if (w > 0) el.scrollLeft = w;
-    };
+    // short lock during re-render to prevent any extra commits
+    commitLockUntilRef.current = Date.now() + 160;
 
-    // cancel pending commit timers
-    if (dayCommitTimerRef.current != null) {
-      window.clearTimeout(dayCommitTimerRef.current);
-      dayCommitTimerRef.current = null;
-    }
+    const centerNow = () => centerDayScroller('auto');
 
     centerNow();
     requestAnimationFrame(centerNow);
@@ -583,55 +672,15 @@ function BarberCalendarCore() {
       centerNow();
       isShiftingRef.current = false;
     });
-  }, [selectedDate]);
+
+    return () => {};
+  }, [selectedDate, centerDayScroller]);
 
   useEffect(() => {
     return () => {
       if (dayCommitTimerRef.current != null) window.clearTimeout(dayCommitTimerRef.current);
     };
   }, []);
-
-  const commitDayFromScroller = useCallback(() => {
-    const sc = dayScrollerRef.current;
-    if (!sc) return;
-    if (isShiftingRef.current) return;
-
-    const w = sc.clientWidth || sc.offsetWidth;
-    if (!w) return;
-
-    const x = sc.scrollLeft;
-
-    // If we landed on a placeholder, shift day
-    const SNAP_SLOP = 14; // slightly forgiving on iOS
-    if (x <= SNAP_SLOP) {
-      isShiftingRef.current = true;
-      shiftSelectedDay(-1);
-      return;
-    }
-    if (x >= 2 * w - SNAP_SLOP) {
-      isShiftingRef.current = true;
-      shiftSelectedDay(1);
-      return;
-    }
-
-    // If we are not centered (stuck between), force recenter so we never stay on empty
-    const center = w;
-    if (Math.abs(x - center) > 24) {
-      try {
-        sc.scrollTo({ left: center, behavior: 'smooth' });
-      } catch {
-        sc.scrollLeft = center;
-      }
-    }
-  }, [shiftSelectedDay]);
-
-  const scheduleDayCommit = useCallback(() => {
-    if (dayCommitTimerRef.current != null) window.clearTimeout(dayCommitTimerRef.current);
-    dayCommitTimerRef.current = window.setTimeout(() => {
-      dayCommitTimerRef.current = null;
-      commitDayFromScroller();
-    }, 70); // iPhone-like settle
-  }, [commitDayFromScroller]);
 
   useEffect(() => {
     setPanelStyle({});
@@ -738,7 +787,9 @@ function BarberCalendarCore() {
     const t = window.setTimeout(() => {
       const el = document.getElementById(id) as HTMLInputElement | null;
       if (el) {
-        try { el.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch {}
+        try {
+          el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        } catch {}
         el.focus();
         el.select();
       }
@@ -1249,7 +1300,7 @@ function BarberCalendarCore() {
         </div>
       )}
 
-      {/* Day Editor Modal (Fixed with Native Scroll Snap) */}
+      {/* Day Editor Modal */}
       {selectedDate && selectedDayISO && (
         <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/80" onMouseDown={() => setSelectedDate(null)}>
           <div
@@ -1258,7 +1309,7 @@ function BarberCalendarCore() {
             onMouseDown={(e) => e.stopPropagation()}
             onTouchStart={(e) => e.stopPropagation()}
           >
-            {/* Header: Tap to Close */}
+            {/* Header: Tap to Close (NO SWIPE HERE) */}
             <div className="flex-shrink-0 flex items-center justify-between cursor-pointer mb-4" onClick={animateCloseDown} title="Tap to close">
               <h3 className="text-2xl md:text-3xl font-bold" style={{ fontFamily: BRAND.fontTitle }}>
                 {WEEKDAYS_FULL[(selectedDate.getDay() + 6) % 7]} {selectedDate.getDate()} {MONTHS[selectedDate.getMonth()]} {selectedDate.getFullYear()}
@@ -1266,22 +1317,22 @@ function BarberCalendarCore() {
               <div className="w-10 md:w-12" />
             </div>
 
-            {/* Native Scroll Snap Container */}
+            {/* Body: Swipe anywhere + Scroll */}
             <div className="flex-1 relative w-full min-h-0">
               <div
                 ref={dayScrollerRef}
                 onScroll={scheduleDayCommit}
                 onTouchEnd={scheduleDayCommit}
                 onTouchCancel={scheduleDayCommit}
-                onMouseUp={scheduleDayCommit}
                 onPointerUp={scheduleDayCommit}
+                onMouseUp={scheduleDayCommit}
                 className="absolute inset-0 flex overflow-x-auto snap-x snap-mandatory no-scrollbar min-h-0"
                 style={{ WebkitOverflowScrolling: 'touch', overscrollBehaviorX: 'contain' }}
               >
-                {/* PREV (Placeholder) */}
+                {/* PREV placeholder */}
                 <div className="w-full h-full flex-shrink-0 snap-center bushi-snap-stop min-h-0" />
 
-                {/* CURRENT (Content) — iOS Safari safe scroll wrapper */}
+                {/* CURRENT content (iOS-safe) */}
                 <div className="w-full h-full flex-shrink-0 snap-center bushi-snap-stop min-h-0">
                   <div
                     className="h-full min-h-0 overflow-y-auto"
@@ -1291,10 +1342,7 @@ function BarberCalendarCore() {
                       paddingBottom: keyboardInset ? `${keyboardInset}px` : undefined,
                     }}
                   >
-                    <div
-                      className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 px-0.5"
-                      style={{ gridAutoRows: 'min-content' }}
-                    >
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 px-0.5" style={{ gridAutoRows: 'min-content' }}>
                       {DAY_SLOTS.map((time) => {
                         const value = (selectedDayMap as Record<string, string>)[time] || '';
                         const isSaved = !!(savedPulse && savedPulse.day === selectedDayISO && savedPulse.time === time);
@@ -1331,7 +1379,7 @@ function BarberCalendarCore() {
                   </div>
                 </div>
 
-                {/* NEXT (Placeholder) */}
+                {/* NEXT placeholder */}
                 <div className="w-full h-full flex-shrink-0 snap-center bushi-snap-stop min-h-0" />
               </div>
             </div>
