@@ -391,7 +391,7 @@ function BarberCalendarCore() {
     const s = Math.min(1, safeAvail / needed);
 
     // Don't shrink too much; if it gets tiny, user wouldn't like it.
-    setMonthScale(s < 0.72 ? 0.72 : s);
+    setMonthScale(s < 0.55 ? 0.55 : s);
   }, []);
 
   useLayoutEffect(() => {
@@ -1105,7 +1105,7 @@ function BarberCalendarCore() {
           <img
             src={BRAND.logoLight}
             alt="logo"
-            className="h-[clamp(96px,20vw,160px)] w-auto max-w-[48vw] md:max-w-none md:h-[22rem] object-contain cursor-pointer"
+            className="h-[clamp(110px,22vw,180px)] w-[50%] max-w-[50%] md:w-auto md:max-w-none md:h-[22rem] object-contain cursor-pointer"
             onLoad={recomputeMonthScale}
             onClick={() => {
               const now = new Date();
