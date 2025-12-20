@@ -1,5 +1,5 @@
 'use client';
-// Bushi Admin â€” Month grid + Day editor (Native Scroll Snap Fix) + Search + Closest available
+// Bushi Admin — Month grid + Day editor (Native Scroll Snap Fix) + Search + Closest available
 // FIX: iOS fast-swipe blank/half-render bug by shifting day ONLY after scroll settles (debounced "scroll end"),
 //      plus shift lock + remount key + reset vertical scroll.
 // FIX v2: Pre-mount Prev/Next days to fix "12:00 cutoff" rendering issue.
@@ -56,6 +56,18 @@ function injectBushiStyles() {
       -ms-overflow-style: none; /* IE and Edge */
       scrollbar-width: none; /* Firefox */
     }
+
+    /* iOS paint/glitch fix for long scroll lists inside snap containers */
+    .ios-gpu-layer {
+      transform: translateZ(0);
+      -webkit-transform: translateZ(0);
+      will-change: transform;
+      backface-visibility: hidden;
+      -webkit-backface-visibility: hidden;
+    }
+    .ios-scrollfix {
+      contain: paint;
+    }
   `;
   document.head.appendChild(style);
 }
@@ -102,29 +114,29 @@ const slotInputId = (dayISO: string, time: string) =>
 // =============================================================================
 // Weekdays / Months (Bulgarian)
 // =============================================================================
-const WEEKDAYS_SHORT = ['ÐŸÐ¾Ð½', 'Ð’Ñ‚Ð¾', 'Ð¡Ñ€Ñ', 'Ð§ÐµÑ‚', 'ÐŸÐµÑ‚', 'Ð¡ÑŠÐ±', 'ÐÐµÐ´'];
+const WEEKDAYS_SHORT = ['Пон', 'Вто', 'Сря', 'Чет', 'Пет', 'Съб', 'Нед'];
 const WEEKDAYS_FULL = [
-  'ÐŸÐ¾Ð½ÐµÐ´ÐµÐ»Ð½Ð¸Ðº',
-  'Ð’Ñ‚Ð¾Ñ€Ð½Ð¸Ðº',
-  'Ð¡Ñ€ÑÐ´Ð°',
-  'Ð§ÐµÑ‚Ð²ÑŠÑ€Ñ‚ÑŠÐº',
-  'ÐŸÐµÑ‚ÑŠÐº',
-  'Ð¡ÑŠÐ±Ð¾Ñ‚Ð°',
-  'ÐÐµÐ´ÐµÐ»Ñ',
+  'Понеделник',
+  'Вторник',
+  'Сряда',
+  'Четвъртък',
+  'Петък',
+  'Събота',
+  'Неделя',
 ];
 const MONTHS = [
-  'Ð¯Ð½ÑƒÐ°Ñ€Ð¸',
-  'Ð¤ÐµÐ²Ñ€ÑƒÐ°Ñ€Ð¸',
-  'ÐœÐ°Ñ€Ñ‚',
-  'ÐÐ¿Ñ€Ð¸Ð»',
-  'ÐœÐ°Ð¹',
-  'Ð®Ð½Ð¸',
-  'Ð®Ð»Ð¸',
-  'ÐÐ²Ð³ÑƒÑÑ‚',
-  'Ð¡ÐµÐ¿Ñ‚ÐµÐ¼Ð²Ñ€Ð¸',
-  'ÐžÐºÑ‚Ð¾Ð¼Ð²Ñ€Ð¸',
-  'ÐÐ¾ÐµÐ¼Ð²Ñ€Ð¸',
-  'Ð”ÐµÐºÐµÐ¼Ð²Ñ€Ð¸',
+  'Януари',
+  'Февруари',
+  'Март',
+  'Април',
+  'Май',
+  'Юни',
+  'Юли',
+  'Август',
+  'Септември',
+  'Октомври',
+  'Ноември',
+  'Декември',
 ];
 
 // =============================================================================
@@ -319,8 +331,8 @@ const SlotRow = React.memo(
                   ? 'bg-red-900/30 border-red-600/70'
                   : 'bg-neutral-900/60 hover:bg-neutral-800/70 border-neutral-700/50'
               }`}
-              aria-label={isArmed ? 'ÐŸÐ¾Ñ‚Ð²ÑŠÑ€Ð´Ð¸' : 'ÐŸÑ€ÐµÐ¼Ð°Ñ…Ð½Ð¸'}
-              title={isArmed ? 'ÐŸÐ¾Ñ‚Ð²ÑŠÑ€Ð´Ð¸' : 'ÐŸÑ€ÐµÐ¼Ð°Ñ…Ð½Ð¸'}
+              aria-label={isArmed ? 'Потвърди' : 'Премахни'}
+              title={isArmed ? 'Потвърди' : 'Премахни'}
             >
               <img
                 src={isArmed ? '/tick-green.png' : '/razor.png'}
@@ -387,25 +399,17 @@ function BarberCalendarCore() {
     if (!vv) return;
 
     const computeInset = () => {
-      // IMPORTANT: On iOS, VisualViewport height can change because of the browser UI bars,
-      // even when the keyboard is NOT open. Only apply inset when typing AND the shrink is big.
-      const raw = Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop));
-      const typing = isTypingTarget(document.activeElement);
-      const inset = typing && raw > 120 ? raw : 0;
+      const inset = Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop));
       setKeyboardInset(inset > 0 ? inset + 12 : 0);
     };
 
     computeInset();
     vv.addEventListener('resize', computeInset);
     vv.addEventListener('scroll', computeInset);
-    window.addEventListener('focusin', computeInset);
-    window.addEventListener('focusout', computeInset);
 
     return () => {
       vv.removeEventListener('resize', computeInset);
       vv.removeEventListener('scroll', computeInset);
-      window.removeEventListener('focusin', computeInset);
-      window.removeEventListener('focusout', computeInset);
     };
   }, []);
 
@@ -569,7 +573,7 @@ function BarberCalendarCore() {
   const [panelStyle, setPanelStyle] = useState<React.CSSProperties>({});
 
   // ===========================================================================
-  // NATIVE SCROLL SNAP LOGIC (Day Swipe) â€” FIXED FOR iOS FAST SWIPES
+  // NATIVE SCROLL SNAP LOGIC (Day Swipe) — FIXED FOR iOS FAST SWIPES
   // ===========================================================================
   const dayScrollerRef = useRef<HTMLDivElement>(null);
   const dayContentRef = useRef<HTMLDivElement>(null);
@@ -708,32 +712,22 @@ function BarberCalendarCore() {
         (document.getElementById('bushi-day-content') as HTMLDivElement | null) || dayContentRef.current;
 
       if (v) {
-        try {
-          v.scrollTo({ top: 0, left: 0, behavior: 'auto' });
-        } catch {
-          v.scrollTop = 0;
-        }
+        // Always start at the top
         v.scrollTop = 0;
 
-        // Force a reflow (helps iOS repaint issues)
+        // Force iOS to paint the whole scroll area (prevents "half-render"/blank bottom)
+        v.style.willChange = 'transform';
+        v.style.transform = 'translateZ(0)';
+        (v.style as any).webkitTransform = 'translateZ(0)';
+
         // eslint-disable-next-line @typescript-eslint/no-unused-expressions
         (v as any).offsetHeight;
 
-        // iOS repaint nudge: tiny scroll jiggle forces Safari to repaint the whole list
-        v.scrollTop = 1;
-        v.scrollTop = 0;
         requestAnimationFrame(() => {
-          v.scrollTop = 1;
           v.scrollTop = 0;
+          // eslint-disable-next-line @typescript-eslint/no-unused-expressions
+          (v as any).offsetHeight;
         });
-        window.setTimeout(() => {
-          v.scrollTop = 1;
-          v.scrollTop = 0;
-        }, 120);
-        window.setTimeout(() => {
-          v.scrollTop = 1;
-          v.scrollTop = 0;
-        }, 260);
       }
 
       // unlock shifting after the browser has settled
@@ -1075,6 +1069,8 @@ function BarberCalendarCore() {
   const renderDayColumn = (date: Date, isCurrent: boolean) => {
     const iso = toISODate(date);
     const dayMap = store[iso] || {};
+    const PAINT_PAD = 240;
+    const bottomPad = PAINT_PAD + keyboardInset;
     
     return (
       <div
@@ -1082,22 +1078,17 @@ function BarberCalendarCore() {
         id={isCurrent ? 'bushi-day-content' : undefined}
         // Only attach the 'ref' to the current day so we can control its scroll
         ref={isCurrent ? dayContentRef : undefined}
-        className="w-full h-full flex-shrink-0 snap-center overflow-y-auto no-scrollbar"
+        className="w-full h-full flex-shrink-0 snap-center overflow-y-auto ios-gpu-layer ios-scrollfix"
         style={{
           WebkitOverflowScrolling: 'touch',
           overscrollBehaviorY: 'contain' as any,
-
-          // iOS paint/compositing stability
-          transform: 'translateZ(0)',
+          overflowAnchor: 'none' as any,
+          paddingBottom: `${bottomPad}px`,
           WebkitTransform: 'translateZ(0)',
-          willChange: 'transform, scroll-position',
+          transform: 'translateZ(0)',
+          willChange: 'transform',
           backfaceVisibility: 'hidden',
           WebkitBackfaceVisibility: 'hidden',
-          contain: 'paint' as any,
-
-          // Only add extra bottom space when typing (keyboard is open).
-          // Otherwise keep it tight so the list ends right after the last slot.
-          paddingBottom: keyboardInset ? `${keyboardInset}px` : 'max(12px, env(safe-area-inset-bottom))',
         }}
       >
         <div
@@ -1136,21 +1127,11 @@ function BarberCalendarCore() {
         {/* Show loading text only if we have absolutely no data yet */}
         {!remoteReady && (
           <div className="mt-3 text-xs text-neutral-500 text-center" style={{ fontFamily: BRAND.fontBody }}>
-            Ð—Ð°Ñ€ÐµÐ¶Ð´Ð°Ð½Ðµ Ð¾Ñ‚ ÑÑŠÑ€Ð²ÑŠÑ€Ð°â€¦
+            Зареждане от сървъра…
           </div>
         )}
 
-        {/* iOS repaint sentinel (does NOT add scrollable blank space; transform doesn't affect layout) */}
-        <div
-          aria-hidden="true"
-          style={{
-            height: 1,
-            opacity: 0.01,
-            pointerEvents: 'none',
-            transform: 'translateY(160px)',
-            WebkitTransform: 'translateY(160px)',
-          }}
-        />
+        <div aria-hidden="true" style={{ height: PAINT_PAD }} />
       </div>
     );
   };
@@ -1199,11 +1180,11 @@ function BarberCalendarCore() {
               <div key={d} className="flex flex-col items-center gap-2">
                 {isSat ? (
                   <button onClick={() => setShowAvail(true)} className={weekendBtnClass}>
-                    <span className={weekendEmojiClass}>â±ï¸</span>
+                    <span className={weekendEmojiClass}>⏱️</span>
                   </button>
                 ) : isSun ? (
                   <button onClick={() => setShowSearch(true)} className={weekendBtnClass}>
-                    <span className={weekendEmojiClass}>ðŸ”</span>
+                    <span className={weekendEmojiClass}>🔍</span>
                   </button>
                 ) : (
                   <div className="h-10 md:h-11" aria-hidden="true" />
@@ -1286,7 +1267,7 @@ function BarberCalendarCore() {
           <div className="w-[min(100%-28px,860px)] max-w-2xl rounded-3xl border border-neutral-800 bg-neutral-950/95 shadow-2xl px-5 py-5 sm:px-7 sm:py-7">
              <div className="flex items-center justify-between gap-3">
                 <div className="text-[clamp(22px,4.2vw,32px)] leading-none select-none" style={{ fontFamily: BRAND.fontTitle }}>
-                ÐÐ°Ð¹-Ð±Ð»Ð¸Ð·ÐºÐ¸ ÑÐ²Ð¾Ð±Ð¾Ð´Ð½Ð¸ Ñ‡Ð°ÑÐ¾Ð²Ðµ
+                Най-близки свободни часове
               </div>
               <button
                 onClick={() => syncFromRemote()}
@@ -1298,7 +1279,7 @@ function BarberCalendarCore() {
             </div>
             <div className="mt-4 max-h-[62vh] overflow-y-auto pr-1">
                {closestAvail.length === 0 ? (
-                <div className="text-neutral-400 text-sm" style={{ fontFamily: BRAND.fontBody }}>ÐÑÐ¼Ð° ÑÐ²Ð¾Ð±Ð¾Ð´Ð½Ð¸ Ñ‡Ð°ÑÐ¾Ð²Ðµ Ð½Ð°Ð¿Ñ€ÐµÐ´.</div>
+                <div className="text-neutral-400 text-sm" style={{ fontFamily: BRAND.fontBody }}>Няма свободни часове напред.</div>
               ) : (
                 <div className="space-y-3">
                   {closestGrouped.map(({ dayISO, list }) => (
@@ -1339,20 +1320,20 @@ function BarberCalendarCore() {
           }}
         >
           <div className="w-[min(100%-28px,860px)] max-w-2xl rounded-3xl border border-neutral-800 bg-neutral-950/95 shadow-2xl px-5 py-5 sm:px-7 sm:py-7">
-             <div className="text-[clamp(22px,4.2vw,32px)] leading-none select-none" style={{ fontFamily: BRAND.fontTitle }}>Ð¢ÑŠÑ€ÑÐµÐ½Ðµ Ð½Ð° ÐºÐ»Ð¸ÐµÐ½Ñ‚</div>
+             <div className="text-[clamp(22px,4.2vw,32px)] leading-none select-none" style={{ fontFamily: BRAND.fontTitle }}>Търсене на клиент</div>
              <div className="mt-4">
                <input
                 ref={searchInputRef}
                 value={searchQ}
                 onChange={(e) => setSearchQ(e.target.value)}
-                placeholder="Ð’ÑŠÐ²ÐµÐ´Ð¸ Ð¸Ð¼Ðµâ€¦"
+                placeholder="Въведи име…"
                 className="w-full rounded-2xl bg-neutral-900/70 border border-neutral-700/70 px-4 py-3 text-base"
                 style={{ fontFamily: BRAND.fontBody }}
                />
              </div>
              <div className="mt-4 max-h-[58vh] overflow-y-auto pr-1">
                {hits.length === 0 ? (
-                 <div className="text-neutral-400 text-sm" style={{ fontFamily: BRAND.fontBody }}>ÐÑÐ¼Ð° Ñ€ÐµÐ·ÑƒÐ»Ñ‚Ð°Ñ‚Ð¸.</div>
+                 <div className="text-neutral-400 text-sm" style={{ fontFamily: BRAND.fontBody }}>Няма резултати.</div>
                ) : (
                  <div className="space-y-3">
                   {groupedHits.map(({ dayISO, list }) => (
@@ -1428,15 +1409,13 @@ function BarberCalendarCore() {
               <div
                  ref={dayScrollerRef}
                  onScroll={onDayScroll}
-                 className="absolute inset-0 flex overflow-x-auto snap-x snap-mandatory no-scrollbar"
+                 className="absolute inset-0 flex overflow-x-auto snap-x snap-mandatory no-scrollbar ios-gpu-layer ios-scrollfix"
                  style={{
                    WebkitOverflowScrolling: 'touch',
                    overscrollBehaviorX: 'contain' as any,
-                   transform: 'translateZ(0)',
                    WebkitTransform: 'translateZ(0)',
-                   willChange: 'transform, scroll-position',
-                   backfaceVisibility: 'hidden',
-                   WebkitBackfaceVisibility: 'hidden',
+                   transform: 'translateZ(0)',
+                   willChange: 'transform',
                  }}
                >
                   {/* PREV DAY (Real Render) */}
@@ -1493,7 +1472,7 @@ export default function BarbershopAdminPanel() {
             <p className="text-xs text-neutral-400 text-center mb-6" style={{ fontFamily: BRAND.fontBody }}>Enter your PIN.</p>
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="rounded-2xl bg-neutral-900/80 border border-white/12 px-4 py-3 flex items-center focus-within:border-white/70 transition">
-              <input type="password" inputMode="numeric" autoComplete="off" value={pin} onChange={(e) => setPin(e.target.value)} maxLength={6} className="w-full bg-transparent border-none outline-none text-center text-lg tracking-[0.35em] placeholder:text-neutral-600" style={{ fontFamily: BRAND.fontBody }} placeholder="â€¢â€¢â€¢â€¢" />
+              <input type="password" inputMode="numeric" autoComplete="off" value={pin} onChange={(e) => setPin(e.target.value)} maxLength={6} className="w-full bg-transparent border-none outline-none text-center text-lg tracking-[0.35em] placeholder:text-neutral-600" style={{ fontFamily: BRAND.fontBody }} placeholder="••••" />
             </div>
             {error && <div className="text-xs text-red-400 text-center" style={{ fontFamily: BRAND.fontBody }}>{error}</div>}
             <button type="submit" className="w-full rounded-2xl bg-white text-black font-semibold py-2.5 text-sm tracking-[0.16em] uppercase hover:bg-neutral-200 transition">Unlock</button>
