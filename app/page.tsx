@@ -701,14 +701,6 @@ function BarberCalendarCore() {
       }
     }
 
-    // If it was a scroll gesture, do nothing (native scroll already happened).
-    if (gestureModeRef.current === 'scroll') {
-      gestureModeRef.current = 'none';
-      setSwipeStyle({});
-      setPanelStyle({});
-      return;
-    }
-
     if (gestureModeRef.current === 'vertical') {
       const dy = clamp(Math.max(dyRaw, 0), 0, V_DRAG_CLAMP);
       const opacity = Math.max(0.75, 1 - dy / 640);
