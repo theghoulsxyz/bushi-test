@@ -1,7 +1,3 @@
-{
-type: uploaded file
-fileName: page.tsx
-fullContent:
 'use client';
 // Bushi Admin — Month grid + Day editor + Year view + Search + Closest available (Supabase sync, SAFE PATCH writes)
 
@@ -573,23 +569,21 @@ function BarberCalendarCore() {
 
   const [swipeStyle, setSwipeStyle] = useState<React.CSSProperties>({});
   const [panelStyle, setPanelStyle] = useState<React.CSSProperties>({});
-  const gestureModeRef = useRef<'none' | 'horizontal' | 'vertical'>('none');
+  const gestureModeRef = useRef<'none' | 'horizontal' | 'vertical' | 'scroll'>('none');
 
-  // ✅ iPhone scroll vs swipe tuning (FIXED):
-  const SWIPE_THRESHOLD = 72;
+  // ✅ iPhone scroll vs swipe tuning:
+  // - Make horizontal swipe less sensitive so vertical scrolling wins.
+  const SWIPE_THRESHOLD = 72; // was 52
   const VERTICAL_CLOSE_THRESHOLD = 95;
   const SNAP_EASE = 'cubic-bezier(0.25, 0.9, 0.25, 1)';
 
   const H_DRAG_CLAMP = 220;
   const V_DRAG_CLAMP = 240;
 
-  // Intent thresholds - Tuned to fix vertical scrolling
-  // H_INTENT_SLOP: increased to require more X movement to start swipe
-  // V_INTENT_SLOP: decreased to detect scrolling intent earlier (bail out)
-  // INTENT_RATIO: increased to require flatter angle for horizontal swipe
-  const H_INTENT_SLOP = 30; // was 18
-  const V_INTENT_SLOP = 4;  // was 10
-  const INTENT_RATIO = 1.8; // was 1.35
+  // intent thresholds (helps iPhone scrolling)
+  const H_INTENT_SLOP = 26;
+  const V_INTENT_SLOP = 10;
+  const INTENT_RATIO = 1.6;
 
   const isTabletOrBigger = () =>
     typeof window !== 'undefined' &&
@@ -656,11 +650,18 @@ function BarberCalendarCore() {
   };
 
   const onTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
-    swipeStartX.current = e.touches[0].clientX;
-    swipeStartY.current = e.touches[0].clientY;
+    // If the gesture starts on an input/textarea/etc, don't hijack the touch.
+    // This keeps vertical scrolling and text selection reliable on iOS.
+    swipeStartX.current = null;
+    swipeStartY.current = null;
     swipeDX.current = 0;
     swipeDY.current = 0;
     gestureModeRef.current = 'none';
+
+    if (isTypingTarget(e.target as Element | null)) return;
+
+    swipeStartX.current = e.touches[0].clientX;
+    swipeStartY.current = e.touches[0].clientY;
     setSwipeStyle({ transition: 'none' });
     setPanelStyle({ transition: 'none', transform: 'translateY(0)', opacity: 1 });
   };
@@ -677,10 +678,13 @@ function BarberCalendarCore() {
     const absX = Math.abs(dxRaw);
     const absY = Math.abs(dyRaw);
 
+    // If we already decided this gesture is a scroll, don't try to interpret it later.
+    if (gestureModeRef.current === 'scroll') return;
+
     if (gestureModeRef.current === 'none') {
-      // If we see clear vertical movement, let the browser scroll (do NOT capture swipe).
-      // If it is more vertical than horizontal, or if it crosses the low V threshold with a steep angle.
-      if ((absY >= V_INTENT_SLOP && absY > absX * 0.6) || absY > absX) {
+      // If it looks like a scroll, lock to scroll mode and let the browser handle it.
+      if (absY >= V_INTENT_SLOP && absY > absX * 1.1) {
+        gestureModeRef.current = 'scroll';
         return;
       }
 
@@ -691,10 +695,8 @@ function BarberCalendarCore() {
         return;
       }
 
-      // Optional: allow vertical close on tablet when clearly vertical-down AND at top
-      // Must ensure scrollTop is 0 so we don't block scrolling up content.
-      const isAtTop = e.currentTarget.scrollTop <= 0;
-      if (isTabletOrBigger() && isAtTop && dyRaw > 0 && absY > absX * 1.2) {
+      // Optional: allow vertical close on tablet when clearly vertical-down
+      if (isTabletOrBigger() && dyRaw > 0 && absY > absX * 1.2) {
         gestureModeRef.current = 'vertical';
       }
     }
@@ -723,6 +725,14 @@ function BarberCalendarCore() {
     swipeStartY.current = null;
     swipeDX.current = 0;
     swipeDY.current = 0;
+
+    // If it was a scroll gesture, do nothing (native scroll already happened).
+    if (gestureModeRef.current === 'scroll') {
+      gestureModeRef.current = 'none';
+      setSwipeStyle({});
+      setPanelStyle({});
+      return;
+    }
 
     if (gestureModeRef.current === 'vertical') {
       if (isTabletOrBigger() && dy >= VERTICAL_CLOSE_THRESHOLD) {
@@ -1549,6 +1559,8 @@ function BarberCalendarCore() {
                 style={{
                   ...swipeStyle,
                   touchAction: 'pan-y',
+                  WebkitOverflowScrolling: 'touch',
+                  overscrollBehavior: 'contain',
                   paddingBottom: keyboardInset ? `${keyboardInset}px` : undefined,
                 }}
               >
@@ -1679,5 +1691,4 @@ export default function BarbershopAdminPanel() {
   }
 
   return <BarberCalendarCore />;
-}
 }
