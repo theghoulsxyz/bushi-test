@@ -1,7 +1,6 @@
 'use client';
 // Bushi Admin — Month grid + Day editor (Native Scroll Snap Fix) + Search + Closest available
-// FIX v3: Fixed 12:00 cutoff by moving GPU layer to inner wrapper & Reduced bottom spacing.
-// FIX v4: Reduced empty space to minimum (35px). Added forceful GPU layering to every column to prevent "blanking" on swipe.
+// FIX v5: REMOVED aggressive GPU layering (translate3d) to fix "White Screen" memory crash on iOS.
 
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
@@ -56,14 +55,9 @@ function injectBushiStyles() {
       scrollbar-width: none; /* Firefox */
     }
     
-    /* Force GPU layer to prevent blanking on iOS during scroll/snap */
-    .ios-force-layer {
-      transform: translateZ(0);
-      -webkit-transform: translateZ(0);
-      backface-visibility: hidden;
-      -webkit-backface-visibility: hidden;
-      will-change: transform, scroll-position;
-    }
+    /* REMOVED: .ios-force-layer class 
+       It was causing the memory crash.
+    */
   `;
   document.head.appendChild(style);
 }
@@ -372,7 +366,6 @@ function BarberCalendarCore() {
 
   const [viewYear, setViewYear] = useState(today.getFullYear());
   const [viewMonth, setViewMonth] = useState(today.getMonth());
-
   const [showYear, setShowYear] = useState(false);
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
 
@@ -565,7 +558,7 @@ function BarberCalendarCore() {
   );
 
   const [savedPulse, setSavedPulse] = useState<{ day: string; time: string; ts: number } | null>(null);
-
+  
   const SNAP_EASE = 'cubic-bezier(0.25, 0.9, 0.25, 1)';
   const [panelStyle, setPanelStyle] = useState<React.CSSProperties>({});
 
@@ -619,7 +612,6 @@ function BarberCalendarCore() {
       const now = Date.now();
       // hard guard: prevents "skips 2 days" on fast double swipes
       if (now - lastShiftAtRef.current < 260) {
-        // ensure we recover to center
         centerDayScroller('auto');
         return;
       }
@@ -628,13 +620,10 @@ function BarberCalendarCore() {
       isShiftingRef.current = true;
 
       // stop any remaining momentum & prevent extra edge triggers
-      // (temporary disable snap, recenter, then re-enable)
       (el.style as any).scrollSnapType = 'none';
       el.scrollLeft = w;
-
-      // force a reflow (helps iOS repaint issues)
       // eslint-disable-next-line @typescript-eslint/no-unused-expressions
-      (el as any).offsetHeight;
+      (el as any).offsetHeight; // force reflow
 
       requestAnimationFrame(() => {
         const cur = dayScrollerRef.current;
@@ -644,7 +633,7 @@ function BarberCalendarCore() {
 
       shiftSelectedDay(delta);
 
-      // safety unlock (useLayoutEffect below will also unlock)
+      // safety unlock
       window.setTimeout(() => {
         isShiftingRef.current = false;
       }, 520);
@@ -659,7 +648,6 @@ function BarberCalendarCore() {
 
     const w = el.offsetWidth;
     if (!w) return;
-
     const sl = el.scrollLeft;
 
     // edge tolerance (px)
@@ -682,7 +670,6 @@ function BarberCalendarCore() {
 
   const onDayScroll = useCallback(() => {
     if (isShiftingRef.current) return;
-
     clearScrollEndTimer();
     // Debounce: only decide day-change AFTER scrolling stops
     scrollEndTimerRef.current = window.setTimeout(() => {
@@ -692,39 +679,23 @@ function BarberCalendarCore() {
   }, [clearScrollEndTimer, handleDayScrollEnd]);
 
   // Center the scroll view on the middle slide (index 1) whenever the day changes.
-  // Also reset vertical scroll and help iOS repaint.
   const selectedDayISO = useMemo(() => (selectedDate ? toISODate(selectedDate) : null), [selectedDate]);
-
+  
   useLayoutEffect(() => {
     if (!selectedDate) return;
-
     clearScrollEndTimer();
 
     // center horizontal scroller after layout
     requestAnimationFrame(() => {
       centerDayScroller('auto');
 
-      // reset vertical scroll to top on every day change (prevents weird half states)
-      const v =
-        (document.getElementById('bushi-day-content') as HTMLDivElement | null) || dayContentRef.current;
+      // reset vertical scroll to top on every day change
+      const v = (document.getElementById('bushi-day-content') as HTMLDivElement | null) || dayContentRef.current;
 
       if (v) {
-        // Always start at the top
         v.scrollTop = 0;
-
-        // Force iOS to paint the whole scroll area (prevents "half-render"/blank bottom)
-        v.style.willChange = 'transform';
-        v.style.transform = 'translateZ(0)';
-        (v.style as any).webkitTransform = 'translateZ(0)';
-
-        // eslint-disable-next-line @typescript-eslint/no-unused-expressions
-        (v as any).offsetHeight;
-
-        requestAnimationFrame(() => {
-          v.scrollTop = 0;
-          // eslint-disable-next-line @typescript-eslint/no-unused-expressions
-          (v as any).offsetHeight;
-        });
+        // REMOVED: forceful GPU layering here (v.style.transform = 'translateZ(0)')
+        // This was causing memory leaks on page switch.
       }
 
       // unlock shifting after the browser has settled
@@ -1061,12 +1032,11 @@ function BarberCalendarCore() {
   // Year Modal
   const [yearStyle, setYearStyle] = useState<React.CSSProperties>({});
 
-  // Helper to render a full day column (prevents code duplication)
+  // Helper to render a full day column
   const renderDayColumn = (date: Date, isCurrent: boolean) => {
     const iso = toISODate(date);
     const dayMap = store[iso] || {};
     
-    // FIX: Reduce empty space. 
     // 35px is just enough visual padding. + keyboardInset handles the open keyboard.
     const PAINT_PAD = 35; 
     const bottomPad = PAINT_PAD + keyboardInset;
@@ -1077,8 +1047,8 @@ function BarberCalendarCore() {
         id={isCurrent ? 'bushi-day-content' : undefined}
         // Only attach the 'ref' to the current day so we can control its scroll
         ref={isCurrent ? dayContentRef : undefined}
-        // FIX: Add 'ios-force-layer' to every column to prevent blanking on swipe
-        className="w-full h-full flex-shrink-0 snap-center overflow-y-auto ios-force-layer"
+        // FIX V5: REMOVED 'ios-force-layer' to prevent memory exhaustion
+        className="w-full h-full flex-shrink-0 snap-center overflow-y-auto"
         style={{
           WebkitOverflowScrolling: 'touch',
           overscrollBehaviorY: 'contain' as any,
@@ -1087,7 +1057,8 @@ function BarberCalendarCore() {
         }}
       >
         {/* INNER WRAPPER: min-h-full ensures geometry exists even if empty */}
-        <div className="w-full relative min-h-full" style={{ transform: 'translate3d(0,0,0)', willChange: 'transform' }}>
+        {/* FIX V5: REMOVED transform:translate3d(0,0,0) to prevent texture overload */}
+        <div className="w-full relative min-h-full">
           <div
             className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 px-0.5"
             style={{ gridAutoRows: 'min-content' }}
@@ -1098,6 +1069,7 @@ function BarberCalendarCore() {
               const timeKey = `${iso}_${time}`;
               const isArmed = armedRemove === timeKey;
               const isHighlighted = !!highlight && highlight.day === iso && highlight.time === time;
+
               return (
                 <SlotRow
                   key={timeKey}
@@ -1260,7 +1232,7 @@ function BarberCalendarCore() {
         >
           <div className="w-[min(100%-28px,860px)] max-w-2xl rounded-3xl border border-neutral-800 bg-neutral-950/95 shadow-2xl px-5 py-5 sm:px-7 sm:py-7">
              <div className="flex items-center justify-between gap-3">
-               <div className="text-[clamp(22px,4.2vw,32px)] leading-none select-none" style={{ fontFamily: BRAND.fontTitle }}>
+                <div className="text-[clamp(22px,4.2vw,32px)] leading-none select-none" style={{ fontFamily: BRAND.fontTitle }}>
                 Най-близки свободни часове
               </div>
               <button
@@ -1272,12 +1244,12 @@ function BarberCalendarCore() {
               </button>
             </div>
             <div className="mt-4 max-h-[62vh] overflow-y-auto pr-1">
-               {closestAvail.length === 0 ? (
+              {closestAvail.length === 0 ? (
                 <div className="text-neutral-400 text-sm" style={{ fontFamily: BRAND.fontBody }}>Няма свободни часове напред.</div>
               ) : (
                 <div className="space-y-3">
                   {closestGrouped.map(({ dayISO, list }) => (
-                     <div key={dayISO} className="rounded-2xl border border-neutral-800 bg-neutral-900/40 p-3">
+                    <div key={dayISO} className="rounded-2xl border border-neutral-800 bg-neutral-900/40 p-3">
                       <div className="text-sm text-neutral-200 mb-2" style={{ fontFamily: BRAND.fontBody }}>
                         {formatDayLabel(dayISO)}
                       </div>
@@ -1288,7 +1260,7 @@ function BarberCalendarCore() {
                             onClick={() => openFromAvailability(h.dayISO, h.time)}
                             className="rounded-xl border border-neutral-800 bg-neutral-950/60 hover:bg-neutral-900/70 px-3 py-2 text-center"
                           >
-                             <div className="text-sm font-semibold tabular-nums" style={{ fontFamily: BRAND.fontBody }}>{h.time}</div>
+                            <div className="text-sm font-semibold tabular-nums" style={{ fontFamily: BRAND.fontBody }}>{h.time}</div>
                           </button>
                         ))}
                       </div>
@@ -1331,7 +1303,7 @@ function BarberCalendarCore() {
                ) : (
                  <div className="space-y-3">
                   {groupedHits.map(({ dayISO, list }) => (
-                     <div key={dayISO} className="rounded-2xl border border-neutral-800 bg-neutral-900/40 p-3">
+                    <div key={dayISO} className="rounded-2xl border border-neutral-800 bg-neutral-900/40 p-3">
                       <div className="text-sm text-neutral-200 mb-2" style={{ fontFamily: BRAND.fontBody }}>{formatDayLabel(dayISO)}</div>
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                         {list.map((h) => (
@@ -1356,7 +1328,7 @@ function BarberCalendarCore() {
       {showYear && (
         <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/70" onClick={() => setShowYear(false)}>
           <div className="w-[min(100%-32px,820px)] max-w-xl rounded-3xl border border-neutral-800 bg-neutral-950/95 shadow-2xl px-6 py-6 sm:px-8 sm:py-8" style={yearStyle} onClick={(e) => e.stopPropagation()}>
-              <div className="flex items-center justify-center">
+             <div className="flex items-center justify-center">
               <div className="text-[clamp(30px,6vw,44px)] leading-none select-none" style={{ fontFamily: BRAND.fontTitle }}>{viewYear}</div>
             </div>
             <div className="mt-6 grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-4">
@@ -1403,19 +1375,19 @@ function BarberCalendarCore() {
               <div
                  ref={dayScrollerRef}
                  onScroll={onDayScroll}
-                 className="absolute inset-0 flex overflow-x-auto snap-x snap-mandatory no-scrollbar ios-force-layer"
+                 className="absolute inset-0 flex overflow-x-auto snap-x snap-mandatory no-scrollbar"
                  style={{
                    WebkitOverflowScrolling: 'touch',
                    overscrollBehaviorX: 'contain' as any,
                  }}
               >
-                  {/* PREV DAY (Real Render) */}
+                  {/* PREV DAY */}
                   {selectedDate && renderDayColumn(addDays(selectedDate, -1), false)}
 
-                  {/* CURRENT DAY (Real Render) */}
+                  {/* CURRENT DAY */}
                   {selectedDate && renderDayColumn(selectedDate, true)}
 
-                  {/* NEXT DAY (Real Render) */}
+                  {/* NEXT DAY */}
                   {selectedDate && renderDayColumn(addDays(selectedDate, 1), false)}
                </div>
             </div>
@@ -1460,7 +1432,7 @@ export default function BarbershopAdminPanel() {
           <div className="mb-4 flex justify-center">
              <img src="/bush.png" alt="Bushi logo" className="max-h-16 w-auto object-contain" />
           </div>
-             <p className="text-xs text-neutral-400 text-center mb-6" style={{ fontFamily: BRAND.fontBody }}>Enter your PIN.</p>
+          <p className="text-xs text-neutral-400 text-center mb-6" style={{ fontFamily: BRAND.fontBody }}>Enter your PIN.</p>
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="rounded-2xl bg-neutral-900/80 border border-white/12 px-4 py-3 flex items-center focus-within:border-white/70 transition">
               <input type="password" inputMode="numeric" autoComplete="off" value={pin} onChange={(e) => setPin(e.target.value)} maxLength={6} className="w-full bg-transparent border-none outline-none text-center text-lg tracking-[0.35em] placeholder:text-neutral-600" style={{ fontFamily: BRAND.fontBody }} placeholder="••••" />
