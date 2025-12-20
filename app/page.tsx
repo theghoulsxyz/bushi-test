@@ -1,9 +1,7 @@
 'use client';
 // Bushi Admin — Month grid + Day editor (Native Scroll Snap Fix) + Search + Closest available
-// FIX: iOS fast-swipe blank/half-render bug by shifting day ONLY after scroll settles (debounced "scroll end"),
-//      plus shift lock + remount key + reset vertical scroll.
-// FIX v2: Pre-mount Prev/Next days to fix "12:00 cutoff" rendering issue.
 // FIX v3: Fixed 12:00 cutoff by moving GPU layer to inner wrapper & Reduced bottom spacing.
+// FIX v4: Reduced empty space to minimum (35px). Added forceful GPU layering to every column to prevent "blanking" on swipe.
 
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
@@ -57,17 +55,14 @@ function injectBushiStyles() {
       -ms-overflow-style: none; /* IE and Edge */
       scrollbar-width: none; /* Firefox */
     }
-
-    /* iOS paint/glitch fix for long scroll lists inside snap containers */
-    .ios-gpu-layer {
+    
+    /* Force GPU layer to prevent blanking on iOS during scroll/snap */
+    .ios-force-layer {
       transform: translateZ(0);
       -webkit-transform: translateZ(0);
-      will-change: transform;
       backface-visibility: hidden;
       -webkit-backface-visibility: hidden;
-    }
-    .ios-scrollfix {
-      contain: paint;
+      will-change: transform, scroll-position;
     }
   `;
   document.head.appendChild(style);
@@ -1071,8 +1066,9 @@ function BarberCalendarCore() {
     const iso = toISODate(date);
     const dayMap = store[iso] || {};
     
-    // REDUCED PADDING to reclaim empty space
-    const PAINT_PAD = 140; 
+    // FIX: Reduce empty space. 
+    // 35px is just enough visual padding. + keyboardInset handles the open keyboard.
+    const PAINT_PAD = 35; 
     const bottomPad = PAINT_PAD + keyboardInset;
 
     return (
@@ -1081,8 +1077,8 @@ function BarberCalendarCore() {
         id={isCurrent ? 'bushi-day-content' : undefined}
         // Only attach the 'ref' to the current day so we can control its scroll
         ref={isCurrent ? dayContentRef : undefined}
-        // Removed explicit 'ios-gpu-layer' from here to fix cutoff
-        className="w-full h-full flex-shrink-0 snap-center overflow-y-auto"
+        // FIX: Add 'ios-force-layer' to every column to prevent blanking on swipe
+        className="w-full h-full flex-shrink-0 snap-center overflow-y-auto ios-force-layer"
         style={{
           WebkitOverflowScrolling: 'touch',
           overscrollBehaviorY: 'contain' as any,
@@ -1090,8 +1086,8 @@ function BarberCalendarCore() {
           paddingBottom: `${bottomPad}px`,
         }}
       >
-        {/* INNER WRAPPER: Forces GPU layer calculation on the content itself */}
-        <div className="w-full relative" style={{ transform: 'translate3d(0,0,0)', willChange: 'transform' }}>
+        {/* INNER WRAPPER: min-h-full ensures geometry exists even if empty */}
+        <div className="w-full relative min-h-full" style={{ transform: 'translate3d(0,0,0)', willChange: 'transform' }}>
           <div
             className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 px-0.5"
             style={{ gridAutoRows: 'min-content' }}
@@ -1129,8 +1125,6 @@ function BarberCalendarCore() {
               Зареждане от сървъра…
             </div>
           )}
-
-          {/* Spacer div removed to reclaim space */}
         </div>
       </div>
     );
@@ -1409,13 +1403,10 @@ function BarberCalendarCore() {
               <div
                  ref={dayScrollerRef}
                  onScroll={onDayScroll}
-                 className="absolute inset-0 flex overflow-x-auto snap-x snap-mandatory no-scrollbar ios-gpu-layer ios-scrollfix"
+                 className="absolute inset-0 flex overflow-x-auto snap-x snap-mandatory no-scrollbar ios-force-layer"
                  style={{
                    WebkitOverflowScrolling: 'touch',
                    overscrollBehaviorX: 'contain' as any,
-                   WebkitTransform: 'translateZ(0)',
-                   transform: 'translateZ(0)',
-                   willChange: 'transform',
                  }}
               >
                   {/* PREV DAY (Real Render) */}
