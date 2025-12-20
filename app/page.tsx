@@ -2,6 +2,7 @@
 // Bushi Admin — Month grid + Day editor (Native Scroll Snap Fix) + Search + Closest available
 // FIX: iOS fast-swipe blank/half-render bug by shifting day ONLY after scroll settles (debounced "scroll end"),
 //      plus shift lock + remount key + reset vertical scroll.
+// FIX v2: Pre-mount Prev/Next days to fix "12:00 cutoff" rendering issue.
 
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
@@ -52,8 +53,8 @@ function injectBushiStyles() {
     }
     /* Hide scrollbar for IE, Edge and Firefox */
     .no-scrollbar {
-      -ms-overflow-style: none;  /* IE and Edge */
-      scrollbar-width: none;  /* Firefox */
+      -ms-overflow-style: none; /* IE and Edge */
+      scrollbar-width: none; /* Firefox */
     }
   `;
   document.head.appendChild(style);
@@ -65,6 +66,7 @@ function injectBushiStyles() {
 const pad = (n: number) => (n < 10 ? `0${n}` : `${n}`);
 const toISODate = (d: Date) =>
   `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+
 const addDays = (d: Date, delta: number) =>
   new Date(d.getFullYear(), d.getMonth(), d.getDate() + delta);
 
@@ -101,7 +103,6 @@ const slotInputId = (dayISO: string, time: string) =>
 // Weekdays / Months (Bulgarian)
 // =============================================================================
 const WEEKDAYS_SHORT = ['Пон', 'Вто', 'Сря', 'Чет', 'Пет', 'Съб', 'Нед'];
-
 const WEEKDAYS_FULL = [
   'Понеделник',
   'Вторник',
@@ -111,7 +112,6 @@ const WEEKDAYS_FULL = [
   'Събота',
   'Неделя',
 ];
-
 const MONTHS = [
   'Януари',
   'Февруари',
@@ -365,7 +365,6 @@ function BarberCalendarCore() {
 
   const [viewYear, setViewYear] = useState(today.getFullYear());
   const [viewMonth, setViewMonth] = useState(today.getMonth());
-
   const [showYear, setShowYear] = useState(false);
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
 
@@ -374,7 +373,6 @@ function BarberCalendarCore() {
   const searchInputRef = useRef<HTMLInputElement | null>(null);
 
   const [showAvail, setShowAvail] = useState(false);
-
   const [highlight, setHighlight] = useState<{ day: string; time: string; ts: number } | null>(null);
   const [pendingFocus, setPendingFocus] = useState<{ day: string; time: string; ts: number } | null>(null);
 
@@ -383,7 +381,6 @@ function BarberCalendarCore() {
 
   // Keyboard inset for iPhone typing visibility
   const [keyboardInset, setKeyboardInset] = useState(0);
-
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const vv = (window as any).visualViewport as VisualViewport | undefined;
@@ -560,7 +557,6 @@ function BarberCalendarCore() {
   );
 
   const [savedPulse, setSavedPulse] = useState<{ day: string; time: string; ts: number } | null>(null);
-
   const SNAP_EASE = 'cubic-bezier(0.25, 0.9, 0.25, 1)';
   const [panelStyle, setPanelStyle] = useState<React.CSSProperties>({});
 
@@ -792,6 +788,7 @@ function BarberCalendarCore() {
     [clearArmedTimeout, remoteReady],
   );
 
+  // Note: selectedDayMap is just for checking logic; the new renderer pulls directly from store inside the loop
   const selectedDayMap = useMemo(() => {
     if (!selectedDayISO) return {};
     return store[selectedDayISO] || {};
@@ -891,7 +888,6 @@ function BarberCalendarCore() {
 
   // Search
   type Hit = { dayISO: string; time: string; name: string };
-
   const hits: Hit[] = useMemo(() => {
     const q = searchQ.trim().toLowerCase();
     if (!q) return [];
@@ -1000,6 +996,7 @@ function BarberCalendarCore() {
     const dyRaw = e.touches[0].clientY - monthStartY.current;
     monthDX.current = dxRaw;
     monthDY.current = dyRaw;
+
     if (monthModeRef.current === 'none') {
       if (Math.abs(dxRaw) > 12 && Math.abs(dxRaw) > Math.abs(dyRaw) * 1.15) {
         monthModeRef.current = 'horizontal';
@@ -1022,6 +1019,7 @@ function BarberCalendarCore() {
     monthStartY.current = null;
     monthDX.current = 0;
     monthDY.current = 0;
+
     if (monthModeRef.current === 'horizontal') {
       if (Math.abs(dx) >= MONTH_SWIPE_THRESHOLD) {
         animateMonthShift(dx < 0 ? +1 : -1);
@@ -1040,6 +1038,66 @@ function BarberCalendarCore() {
 
   // Year Modal
   const [yearStyle, setYearStyle] = useState<React.CSSProperties>({});
+
+  // Helper to render a full day column (prevents code duplication)
+  const renderDayColumn = (date: Date, isCurrent: boolean) => {
+    const iso = toISODate(date);
+    const dayMap = store[iso] || {};
+    
+    return (
+      <div
+        key={iso}
+        // Only attach the 'ref' to the current day so we can control its scroll
+        ref={isCurrent ? dayContentRef : undefined}
+        className="w-full h-full flex-shrink-0 snap-center overflow-y-auto"
+        style={{
+          WebkitOverflowScrolling: 'touch',
+          overscrollBehaviorY: 'contain' as any,
+          paddingBottom: keyboardInset ? `${keyboardInset}px` : undefined,
+        }}
+      >
+        <div
+          className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 px-0.5"
+          style={{ gridAutoRows: 'min-content' }}
+        >
+          {DAY_SLOTS.map((time) => {
+            const value = dayMap[time] || '';
+            // Only animate 'saved' pulse on the active day to save resources
+            const isSaved = isCurrent && !!(savedPulse && savedPulse.day === iso && savedPulse.time === time);
+            const timeKey = `${iso}_${time}`;
+            const isArmed = armedRemove === timeKey;
+            const isHighlighted = !!highlight && highlight.day === iso && highlight.time === time;
+
+            return (
+              <SlotRow
+                key={timeKey}
+                dayISO={iso}
+                time={time}
+                value={value}
+                isSaved={isSaved}
+                isArmed={isArmed}
+                isHighlighted={isHighlighted}
+                canWrite={remoteReady}
+                onStartEditing={startEditing}
+                onStopEditing={stopEditing}
+                onSave={saveName}
+                onArm={armRemove}
+                onConfirmRemove={confirmRemove}
+                onRevealFocus={revealFocus}
+              />
+            );
+          })}
+        </div>
+        
+        {/* Show loading text only if we have absolutely no data yet */}
+        {!remoteReady && (
+          <div className="mt-3 text-xs text-neutral-500 text-center" style={{ fontFamily: BRAND.fontBody }}>
+            Зареждане от сървъра…
+          </div>
+        )}
+      </div>
+    );
+  };
 
   return (
     <div
@@ -1123,6 +1181,7 @@ function BarberCalendarCore() {
               'h-full w-full aspect-square md:aspect-auto p-[clamp(6px,1vw,20px)] focus:outline-none',
               !inMonth ? 'border-neutral-800 opacity-40 hover:opacity-70' : isToday ? 'border-white/70 ring-2 ring-white/20' : 'border-neutral-700 hover:border-white/60',
             ].join(' ');
+
             return (
               <button key={key} onClick={() => { if (monthBlockClickRef.current) return; openDay(d); }} className={cls}>
                 <div className="flex flex-col items-center justify-center gap-2 w-full">
@@ -1170,7 +1229,7 @@ function BarberCalendarCore() {
         >
           <div className="w-[min(100%-28px,860px)] max-w-2xl rounded-3xl border border-neutral-800 bg-neutral-950/95 shadow-2xl px-5 py-5 sm:px-7 sm:py-7">
              <div className="flex items-center justify-between gap-3">
-               <div className="text-[clamp(22px,4.2vw,32px)] leading-none select-none" style={{ fontFamily: BRAND.fontTitle }}>
+                <div className="text-[clamp(22px,4.2vw,32px)] leading-none select-none" style={{ fontFamily: BRAND.fontTitle }}>
                 Най-близки свободни часове
               </div>
               <button
@@ -1187,7 +1246,7 @@ function BarberCalendarCore() {
               ) : (
                 <div className="space-y-3">
                   {closestGrouped.map(({ dayISO, list }) => (
-                     <div key={dayISO} className="rounded-2xl border border-neutral-800 bg-neutral-900/40 p-3">
+                    <div key={dayISO} className="rounded-2xl border border-neutral-800 bg-neutral-900/40 p-3">
                       <div className="text-sm text-neutral-200 mb-2" style={{ fontFamily: BRAND.fontBody }}>
                         {formatDayLabel(dayISO)}
                       </div>
@@ -1198,7 +1257,7 @@ function BarberCalendarCore() {
                             onClick={() => openFromAvailability(h.dayISO, h.time)}
                             className="rounded-xl border border-neutral-800 bg-neutral-950/60 hover:bg-neutral-900/70 px-3 py-2 text-center"
                           >
-                             <div className="text-sm font-semibold tabular-nums" style={{ fontFamily: BRAND.fontBody }}>{h.time}</div>
+                            <div className="text-sm font-semibold tabular-nums" style={{ fontFamily: BRAND.fontBody }}>{h.time}</div>
                           </button>
                         ))}
                       </div>
@@ -1241,11 +1300,11 @@ function BarberCalendarCore() {
                ) : (
                  <div className="space-y-3">
                   {groupedHits.map(({ dayISO, list }) => (
-                     <div key={dayISO} className="rounded-2xl border border-neutral-800 bg-neutral-900/40 p-3">
+                    <div key={dayISO} className="rounded-2xl border border-neutral-800 bg-neutral-900/40 p-3">
                       <div className="text-sm text-neutral-200 mb-2" style={{ fontFamily: BRAND.fontBody }}>{formatDayLabel(dayISO)}</div>
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                         {list.map((h) => (
-                           <button key={`${h.dayISO}_${h.time}_${h.name}`} onClick={() => openFromSearch(h.dayISO, h.time)} className="rounded-xl border border-neutral-800 bg-neutral-950/60 hover:bg-neutral-900/70 px-3 py-2 text-left">
+                          <button key={`${h.dayISO}_${h.time}_${h.name}`} onClick={() => openFromSearch(h.dayISO, h.time)} className="rounded-xl border border-neutral-800 bg-neutral-950/60 hover:bg-neutral-900/70 px-3 py-2 text-left">
                             <div className="flex items-center justify-between gap-3">
                               <div className="text-sm font-semibold tabular-nums" style={{ fontFamily: BRAND.fontBody }}>{h.time}</div>
                               <div className="text-sm text-neutral-200 truncate">{h.name}</div>
@@ -1303,76 +1362,27 @@ function BarberCalendarCore() {
               title="Tap to close"
             >
               <h3 className="text-2xl md:text-3xl font-bold" style={{ fontFamily: BRAND.fontTitle }}>
-                 {WEEKDAYS_FULL[(selectedDate.getDay() + 6) % 7]} {selectedDate.getDate()} {MONTHS[selectedDate.getMonth()]} {selectedDate.getFullYear()}
+                {WEEKDAYS_FULL[(selectedDate.getDay() + 6) % 7]} {selectedDate.getDate()} {MONTHS[selectedDate.getMonth()]} {selectedDate.getFullYear()}
               </h3>
               <div className="w-10 md:w-12" />
             </div>
 
             {/* Native Scroll Snap Container */}
             <div className="flex-1 relative w-full h-full min-h-0">
-                <div
+              <div
                  ref={dayScrollerRef}
                  onScroll={onDayScroll}
                  className="absolute inset-0 flex overflow-x-auto snap-x snap-mandatory no-scrollbar"
                  style={{ WebkitOverflowScrolling: 'touch', overscrollBehaviorX: 'contain' as any }}
                >
-                  {/* PREV (Placeholder) */}
-                  <div className="w-full h-full flex-shrink-0 snap-center" />
+                  {/* PREV DAY (Real Render) */}
+                  {selectedDate && renderDayColumn(addDays(selectedDate, -1), false)}
 
-                  {/* CURRENT (Content) — key forces full remount (helps iOS repaint) */}
-                  <div
-                    key={selectedDayISO}
-                    ref={dayContentRef}
-                    className="w-full h-full flex-shrink-0 snap-center overflow-y-auto"
-                    style={{
-                      WebkitOverflowScrolling: 'touch',
-                      overscrollBehaviorY: 'contain' as any,
-                      paddingBottom: keyboardInset ? `${keyboardInset}px` : undefined,
-                    }}
-                  >
-                     <div
-                       className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 px-0.5"
-                       style={{
-                         // important: keep this auto-height so overflow-y can scroll correctly
-                         gridAutoRows: 'min-content',
-                       }}
-                      >
-                       {DAY_SLOTS.map((time) => {
-                         const value = (selectedDayMap as Record<string, string>)[time] || '';
-                         const isSaved = !!(savedPulse && savedPulse.day === selectedDayISO && savedPulse.time === time);
-                         const timeKey = `${selectedDayISO}_${time}`;
-                         const isArmed = armedRemove === timeKey;
-                         const isHighlighted = !!highlight && highlight.day === selectedDayISO && highlight.time === time;
+                  {/* CURRENT DAY (Real Render) */}
+                  {selectedDate && renderDayColumn(selectedDate, true)}
 
-                         return (
-                           <SlotRow
-                             key={timeKey}
-                             dayISO={selectedDayISO}
-                             time={time}
-                             value={value}
-                             isSaved={isSaved}
-                             isArmed={isArmed}
-                             isHighlighted={isHighlighted}
-                             canWrite={remoteReady}
-                             onStartEditing={startEditing}
-                             onStopEditing={stopEditing}
-                             onSave={saveName}
-                             onArm={armRemove}
-                             onConfirmRemove={confirmRemove}
-                             onRevealFocus={revealFocus}
-                           />
-                          );
-                       })}
-                     </div>
-                     {!remoteReady && (
-                        <div className="mt-3 text-xs text-neutral-500 text-center" style={{ fontFamily: BRAND.fontBody }}>
-                           Зареждане от сървъра…
-                        </div>
-                     )}
-                  </div>
-
-                  {/* NEXT (Placeholder) */}
-                  <div className="w-full h-full flex-shrink-0 snap-center" />
+                  {/* NEXT DAY (Real Render) */}
+                  {selectedDate && renderDayColumn(addDays(selectedDate, 1), false)}
                </div>
             </div>
           </div>
@@ -1416,7 +1426,7 @@ export default function BarbershopAdminPanel() {
           <div className="mb-4 flex justify-center">
              <img src="/bush.png" alt="Bushi logo" className="max-h-16 w-auto object-contain" />
           </div>
-           <p className="text-xs text-neutral-400 text-center mb-6" style={{ fontFamily: BRAND.fontBody }}>Enter your PIN.</p>
+            <p className="text-xs text-neutral-400 text-center mb-6" style={{ fontFamily: BRAND.fontBody }}>Enter your PIN.</p>
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="rounded-2xl bg-neutral-900/80 border border-white/12 px-4 py-3 flex items-center focus-within:border-white/70 transition">
               <input type="password" inputMode="numeric" autoComplete="off" value={pin} onChange={(e) => setPin(e.target.value)} maxLength={6} className="w-full bg-transparent border-none outline-none text-center text-lg tracking-[0.35em] placeholder:text-neutral-600" style={{ fontFamily: BRAND.fontBody }} placeholder="••••" />
