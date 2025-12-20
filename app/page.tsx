@@ -1,5 +1,6 @@
 'use client';
 // Bushi Admin — Month grid + Day editor (Native Scroll Snap Fix) + Search + Closest available
+// UPDATE: Faster Swipe Transition (Reduced Debounce + Visual Pop)
 
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
@@ -44,6 +45,15 @@ function injectBushiStyles() {
       0% { transform: scale(1); opacity: 1; }
       100% { transform: scale(1.02); opacity: 0.88; }
     }
+    /* NEW: Snappy transition for day content */
+    @keyframes bushiFastFade {
+      0% { opacity: 0.5; transform: translateX(4px); }
+      100% { opacity: 1; transform: translateX(0); }
+    }
+    .bushi-animate-in {
+      animation: bushiFastFade 0.14s ease-out forwards;
+    }
+    
     /* Hide scrollbar for Chrome, Safari and Opera */
     .no-scrollbar::-webkit-scrollbar {
       display: none;
@@ -53,6 +63,11 @@ function injectBushiStyles() {
       -ms-overflow-style: none;  /* IE and Edge */
       scrollbar-width: none;  /* Firefox */
     }
+
+    /* Make snap feel more decisive (supported on iOS Safari 16+) */
+    .bushi-snap-stop {
+      scroll-snap-stop: always;
+    }
   `;
   document.head.appendChild(style);
 }
@@ -61,13 +76,10 @@ function injectBushiStyles() {
 // Helpers
 // =============================================================================
 const pad = (n: number) => (n < 10 ? `0${n}` : `${n}`);
-const toISODate = (d: Date) =>
-  `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-const addDays = (d: Date, delta: number) =>
-  new Date(d.getFullYear(), d.getMonth(), d.getDate() + delta);
+const toISODate = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const addDays = (d: Date, delta: number) => new Date(d.getFullYear(), d.getMonth(), d.getDate() + delta);
 
-const clamp = (v: number, min: number, max: number) =>
-  Math.max(min, Math.min(max, v));
+const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
 
 function monthMatrix(year: number, month: number) {
   const first = new Date(year, month, 1);
@@ -92,38 +104,14 @@ function isTypingTarget(el: Element | null) {
   return ce === '' || ce === 'true';
 }
 
-const slotInputId = (dayISO: string, time: string) =>
-  `slot_${dayISO.replace(/[^0-9]/g, '')}_${time.replace(/[^0-9]/g, '')}`;
+const slotInputId = (dayISO: string, time: string) => `slot_${dayISO.replace(/[^0-9]/g, '')}_${time.replace(/[^0-9]/g, '')}`;
 
 // =============================================================================
 // Weekdays / Months (Bulgarian)
 // =============================================================================
 const WEEKDAYS_SHORT = ['Пон', 'Вто', 'Сря', 'Чет', 'Пет', 'Съб', 'Нед'];
-
-const WEEKDAYS_FULL = [
-  'Понеделник',
-  'Вторник',
-  'Сряда',
-  'Четвъртък',
-  'Петък',
-  'Събота',
-  'Неделя',
-];
-
-const MONTHS = [
-  'Януари',
-  'Февруари',
-  'Март',
-  'Април',
-  'Май',
-  'Юни',
-  'Юли',
-  'Август',
-  'Септември',
-  'Октомври',
-  'Ноември',
-  'Декември',
-];
+const WEEKDAYS_FULL = ['Понеделник', 'Вторник', 'Сряда', 'Четвъртък', 'Петък', 'Събота', 'Неделя'];
+const MONTHS = ['Януари', 'Февруари', 'Март', 'Април', 'Май', 'Юни', 'Юли', 'Август', 'Септември', 'Октомври', 'Ноември', 'Декември'];
 
 // =============================================================================
 // Slots
@@ -265,9 +253,7 @@ const SlotRow = React.memo(
         className={`relative rounded-2xl bg-neutral-900/80 border px-3 py-1 flex items-center gap-3 overflow-hidden transition ${
           isHighlighted ? 'border-white/60 ring-2 ring-white/20' : 'border-neutral-800'
         }`}
-        style={
-          isHighlighted ? { animation: 'bushiPulse 220ms ease-in-out infinite alternate' } : undefined
-        }
+        style={isHighlighted ? { animation: 'bushiPulse 220ms ease-in-out infinite alternate' } : undefined}
       >
         <div
           className="text-[1.05rem] md:text-[1.15rem] font-semibold tabular-nums min-w-[4.9rem] text-center select-none"
@@ -486,7 +472,7 @@ function BarberCalendarCore() {
     }, 0);
   }, [syncFromRemote, isSlotInputFocused]);
 
-  const revealFocus = useCallback((_day: string, _time: string, inputEl: HTMLInputElement) => {
+  const revealFocus = useCallback((day: string, time: string, inputEl: HTMLInputElement) => {
     window.setTimeout(() => {
       try {
         inputEl.scrollIntoView({ block: 'center', behavior: 'smooth' });
@@ -569,66 +555,144 @@ function BarberCalendarCore() {
   const [panelStyle, setPanelStyle] = useState<React.CSSProperties>({});
 
   // ===========================================================================
-  // FAST DAY SWIPE TRANSITION (visual-only, does not affect scroll physics)
-  // ===========================================================================
-  const DAY_SWIPE_ANIM_MS = 120;
-  const DAY_SWIPE_EASE = 'cubic-bezier(0.22, 0.61, 0.36, 1)';
-
-  const [dayNudgeStyle, setDayNudgeStyle] = useState<React.CSSProperties>({});
-  const dayNudgeTimerRef = useRef<number | null>(null);
-
-  const triggerDayNudge = useCallback((delta: number) => {
-    if (dayNudgeTimerRef.current != null) {
-      window.clearTimeout(dayNudgeTimerRef.current);
-      dayNudgeTimerRef.current = null;
-    }
-
-    const fromX = delta > 0 ? -18 : 18; // small but snappy
-    setDayNudgeStyle({
-      transform: `translateX(${fromX}px)`,
-      opacity: 0.82,
-      transition: 'none',
-    });
-
-    requestAnimationFrame(() => {
-      setDayNudgeStyle({
-        transform: 'translateX(0px)',
-        opacity: 1,
-        transition: `transform ${DAY_SWIPE_ANIM_MS}ms ${DAY_SWIPE_EASE}, opacity ${DAY_SWIPE_ANIM_MS}ms ${DAY_SWIPE_EASE}`,
-      });
-    });
-
-    dayNudgeTimerRef.current = window.setTimeout(() => {
-      setDayNudgeStyle({});
-      dayNudgeTimerRef.current = null;
-    }, DAY_SWIPE_ANIM_MS + 60);
-  }, []);
-
-  useEffect(() => {
-    return () => {
-      if (dayNudgeTimerRef.current != null) window.clearTimeout(dayNudgeTimerRef.current);
-    };
-  }, []);
-
-  // ===========================================================================
-  // NATIVE SCROLL SNAP LOGIC (Day Swipe)
+  // DAY SWIPE (iPhone-like) — Faster detection + Visual Pop
   // ===========================================================================
   const dayScrollerRef = useRef<HTMLDivElement>(null);
   const isShiftingRef = useRef(false);
+  const dayCommitTimerRef = useRef<number | null>(null);
 
-  // Center the scroll view on the middle slide (index 1) whenever the day changes
-  // Use layout effect to prevent visual jump
-  useLayoutEffect(() => {
-    if (dayScrollerRef.current && selectedDate) {
-      const el = dayScrollerRef.current;
-      el.scrollLeft = el.offsetWidth; // Jump to center
+  // hard lock to prevent double-commit (skipping 2 days)
+  const commitLockUntilRef = useRef(0);
 
-      // small delay to unlock checking
-      setTimeout(() => {
-        isShiftingRef.current = false;
-      }, 50);
+  const centerDayScroller = useCallback((behavior: 'auto' | 'smooth' = 'auto') => {
+    const sc = dayScrollerRef.current;
+    if (!sc) return;
+    const w = sc.clientWidth || sc.offsetWidth;
+    if (!w) return;
+    try {
+      if (behavior === 'smooth') sc.scrollTo({ left: w, behavior: 'smooth' });
+      else sc.scrollLeft = w;
+    } catch {
+      sc.scrollLeft = w;
     }
-  }, [selectedDate]);
+  }, []);
+
+  const shiftSelectedDay = useCallback((delta: number) => {
+    setSelectedDate((prev) => {
+      if (!prev) return prev;
+      const next = addDays(prev, delta);
+      setViewYear(next.getFullYear());
+      setViewMonth(next.getMonth());
+      return next;
+    });
+  }, []);
+
+  const commitDaySwipe = useCallback(
+    (delta: number) => {
+      const now = Date.now();
+      commitLockUntilRef.current = now + 320; // prevents 2 commits per gesture
+      isShiftingRef.current = true;
+
+      // immediately re-center so we never show placeholder/blank
+      centerDayScroller('auto');
+
+      shiftSelectedDay(delta);
+    },
+    [centerDayScroller, shiftSelectedDay],
+  );
+
+  const decideAndCommitDay = useCallback(() => {
+    const sc = dayScrollerRef.current;
+    if (!sc) return;
+
+    const now = Date.now();
+    if (now < commitLockUntilRef.current) {
+      // keep it centered while locked
+      centerDayScroller('auto');
+      return;
+    }
+    if (isShiftingRef.current) return;
+
+    // If user is typing, don't change day (prevents accidental swipes)
+    if (editingRef.current || isSlotInputFocused()) {
+      centerDayScroller('smooth');
+      return;
+    }
+
+    const w = sc.clientWidth || sc.offsetWidth;
+    if (!w) return;
+
+    const x = sc.scrollLeft;
+    const center = w;
+    const deltaFromCenter = x - center;
+
+    // EASY TRIGGER THRESHOLD: about 22% of width (min 56px)
+    const THRESH = Math.max(56, Math.round(w * 0.22));
+
+    if (deltaFromCenter <= -THRESH) {
+      // swipe to previous day
+      commitDaySwipe(-1);
+      return;
+    }
+    if (deltaFromCenter >= THRESH) {
+      // swipe to next day
+      commitDaySwipe(+1);
+      return;
+    }
+
+    // not enough -> just snap back to center
+    centerDayScroller('smooth');
+  }, [centerDayScroller, commitDaySwipe, isSlotInputFocused]);
+
+  const scheduleDayCommit = useCallback(() => {
+    if (dayCommitTimerRef.current != null) window.clearTimeout(dayCommitTimerRef.current);
+
+    // CHANGED: Reduced timeout from 80ms to 40ms to make it feel snappier
+    dayCommitTimerRef.current = window.setTimeout(() => {
+      dayCommitTimerRef.current = null;
+
+      const sc = dayScrollerRef.current;
+      if (!sc) return;
+
+      // wait until scroll is stable (iOS momentum)
+      const x1 = sc.scrollLeft;
+      requestAnimationFrame(() => {
+        const x2 = sc.scrollLeft;
+        // CHANGED: Slightly relaxed stability check (3px vs 2px) to trigger sooner
+        if (Math.abs(x2 - x1) > 3) {
+          // still moving -> reschedule
+          scheduleDayCommit();
+          return;
+        }
+        decideAndCommitDay();
+      });
+    }, 40); 
+  }, [decideAndCommitDay]);
+
+  // Center on middle slide when day changes, and keep a short lock
+  useLayoutEffect(() => {
+    if (!selectedDate) return;
+
+    // short lock during re-render to prevent any extra commits
+    commitLockUntilRef.current = Date.now() + 160;
+
+    const centerNow = () => centerDayScroller('auto');
+
+    centerNow();
+    requestAnimationFrame(centerNow);
+    requestAnimationFrame(() => {
+      centerNow();
+      isShiftingRef.current = false;
+    });
+
+    return () => {};
+  }, [selectedDate, centerDayScroller]);
+
+  useEffect(() => {
+    return () => {
+      if (dayCommitTimerRef.current != null) window.clearTimeout(dayCommitTimerRef.current);
+    };
+  }, []);
 
   useEffect(() => {
     setPanelStyle({});
@@ -637,36 +701,6 @@ function BarberCalendarCore() {
   }, [selectedDate, clearArmedTimeout]);
 
   useEffect(() => () => clearArmedTimeout(), [clearArmedTimeout]);
-
-  const shiftSelectedDay = (delta: number) => {
-    // Visual-only nudge (faster feel)
-    triggerDayNudge(delta);
-
-    setSelectedDate((prev) => {
-      if (!prev) return prev;
-      const next = addDays(prev, delta);
-      if (next.getFullYear() !== viewYear || next.getMonth() !== viewMonth) {
-        setViewYear(next.getFullYear());
-        setViewMonth(next.getMonth());
-      }
-      return next;
-    });
-  };
-
-  const onDayScroll = () => {
-    if (!dayScrollerRef.current || isShiftingRef.current) return;
-    const { scrollLeft, offsetWidth } = dayScrollerRef.current;
-
-    // Thresholds: if we are very close to 0 (Previous) or 2*width (Next)
-    // We allow a small slop (5px)
-    if (scrollLeft < 5) {
-      isShiftingRef.current = true;
-      shiftSelectedDay(-1);
-    } else if (scrollLeft > offsetWidth * 2 - 5) {
-      isShiftingRef.current = true;
-      shiftSelectedDay(1);
-    }
-  };
 
   const animateCloseDown = () => {
     setPanelStyle({
@@ -1266,9 +1300,7 @@ function BarberCalendarCore() {
                     setShowYear(false);
                   }}
                   className={`h-11 sm:h-12 rounded-2xl border text-[13px] sm:text-[14px] uppercase tracking-[0.12em] transition ${
-                    idx === viewMonth
-                      ? 'border-white text-white bg-neutral-900'
-                      : 'border-neutral-700/70 text-neutral-200 bg-neutral-900/50 hover:bg-neutral-800'
+                    idx === viewMonth ? 'border-white text-white bg-neutral-900' : 'border-neutral-700/70 text-neutral-200 bg-neutral-900/50 hover:bg-neutral-800'
                   }`}
                   style={{ fontFamily: BRAND.fontTitle }}
                 >
@@ -1280,7 +1312,7 @@ function BarberCalendarCore() {
         </div>
       )}
 
-      {/* Day Editor Modal (Fixed with Native Scroll Snap) */}
+      {/* Day Editor Modal */}
       {selectedDate && selectedDayISO && (
         <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/80" onMouseDown={() => setSelectedDate(null)}>
           <div
@@ -1289,7 +1321,7 @@ function BarberCalendarCore() {
             onMouseDown={(e) => e.stopPropagation()}
             onTouchStart={(e) => e.stopPropagation()}
           >
-            {/* Header: Tap to Close */}
+            {/* Header: Tap to Close (NO SWIPE HERE) */}
             <div className="flex-shrink-0 flex items-center justify-between cursor-pointer mb-4" onClick={animateCloseDown} title="Tap to close">
               <h3 className="text-2xl md:text-3xl font-bold" style={{ fontFamily: BRAND.fontTitle }}>
                 {WEEKDAYS_FULL[(selectedDate.getDay() + 6) % 7]} {selectedDate.getDate()} {MONTHS[selectedDate.getMonth()]} {selectedDate.getFullYear()}
@@ -1297,63 +1329,71 @@ function BarberCalendarCore() {
               <div className="w-10 md:w-12" />
             </div>
 
-            {/* Native Scroll Snap Container */}
-            <div className="flex-1 relative w-full h-full min-h-0">
+            {/* Body: Swipe anywhere + Scroll */}
+            <div className="flex-1 relative w-full min-h-0">
               <div
                 ref={dayScrollerRef}
-                onScroll={onDayScroll}
+                onScroll={scheduleDayCommit}
+                onTouchEnd={scheduleDayCommit}
+                onTouchCancel={scheduleDayCommit}
+                onPointerUp={scheduleDayCommit}
+                onMouseUp={scheduleDayCommit}
                 className="absolute inset-0 flex overflow-x-auto snap-x snap-mandatory no-scrollbar min-h-0"
                 style={{ WebkitOverflowScrolling: 'touch', overscrollBehaviorX: 'contain' }}
               >
-                {/* PREV (Placeholder) */}
-                <div className="w-full h-full flex-shrink-0 snap-center min-h-0" />
+                {/* PREV placeholder */}
+                <div className="w-full h-full flex-shrink-0 snap-center bushi-snap-stop min-h-0" />
 
-                {/* CURRENT (Content) */}
-                <div
-                  key={selectedDayISO} // helps iOS not get "half empty" after many swipes
-                  className="w-full h-full flex-shrink-0 snap-center overflow-y-auto min-h-0"
-                  style={{
-                    paddingBottom: keyboardInset ? `${keyboardInset}px` : undefined,
-                    ...dayNudgeStyle, // faster visual day-change
-                  }}
-                >
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 px-0.5" style={{ gridAutoRows: 'min-content' }}>
-                    {DAY_SLOTS.map((time) => {
-                      const value = (selectedDayMap as Record<string, string>)[time] || '';
-                      const isSaved = !!(savedPulse && savedPulse.day === selectedDayISO && savedPulse.time === time);
-                      const timeKey = `${selectedDayISO}_${time}`;
-                      const isArmed = armedRemove === timeKey;
-                      const isHighlighted = !!highlight && highlight.day === selectedDayISO && highlight.time === time;
+                {/* CURRENT content (iOS-safe) */}
+                <div className="w-full h-full flex-shrink-0 snap-center bushi-snap-stop min-h-0">
+                  <div
+                    className="h-full min-h-0 overflow-y-auto"
+                    style={{
+                      WebkitOverflowScrolling: 'touch',
+                      overscrollBehaviorY: 'contain',
+                      paddingBottom: keyboardInset ? `${keyboardInset}px` : undefined,
+                    }}
+                  >
+                    {/* CHANGED: Added key + animation class for snappier transition */}
+                    <div key={selectedDayISO} className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 px-0.5 bushi-animate-in" style={{ gridAutoRows: 'min-content' }}>
+                      {DAY_SLOTS.map((time) => {
+                        const value = (selectedDayMap as Record<string, string>)[time] || '';
+                        const isSaved = !!(savedPulse && savedPulse.day === selectedDayISO && savedPulse.time === time);
+                        const timeKey = `${selectedDayISO}_${time}`;
+                        const isArmed = armedRemove === timeKey;
+                        const isHighlighted = !!highlight && highlight.day === selectedDayISO && highlight.time === time;
 
-                      return (
-                        <SlotRow
-                          key={timeKey}
-                          dayISO={selectedDayISO}
-                          time={time}
-                          value={value}
-                          isSaved={isSaved}
-                          isArmed={isArmed}
-                          isHighlighted={isHighlighted}
-                          canWrite={remoteReady}
-                          onStartEditing={startEditing}
-                          onStopEditing={stopEditing}
-                          onSave={saveName}
-                          onArm={armRemove}
-                          onConfirmRemove={confirmRemove}
-                          onRevealFocus={revealFocus}
-                        />
-                      );
-                    })}
-                  </div>
-                  {!remoteReady && (
-                    <div className="mt-3 text-xs text-neutral-500 text-center" style={{ fontFamily: BRAND.fontBody }}>
-                      Зареждане от сървъра…
+                        return (
+                          <SlotRow
+                            key={timeKey}
+                            dayISO={selectedDayISO}
+                            time={time}
+                            value={value}
+                            isSaved={isSaved}
+                            isArmed={isArmed}
+                            isHighlighted={isHighlighted}
+                            canWrite={remoteReady}
+                            onStartEditing={startEditing}
+                            onStopEditing={stopEditing}
+                            onSave={saveName}
+                            onArm={armRemove}
+                            onConfirmRemove={confirmRemove}
+                            onRevealFocus={revealFocus}
+                          />
+                        );
+                      })}
                     </div>
-                  )}
+
+                    {!remoteReady && (
+                      <div className="mt-3 text-xs text-neutral-500 text-center" style={{ fontFamily: BRAND.fontBody }}>
+                        Зареждане от сървъра…
+                      </div>
+                    )}
+                  </div>
                 </div>
 
-                {/* NEXT (Placeholder) */}
-                <div className="w-full h-full flex-shrink-0 snap-center min-h-0" />
+                {/* NEXT placeholder */}
+                <div className="w-full h-full flex-shrink-0 snap-center bushi-snap-stop min-h-0" />
               </div>
             </div>
           </div>
