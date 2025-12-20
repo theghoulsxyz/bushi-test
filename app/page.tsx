@@ -366,6 +366,54 @@ function BarberCalendarCore() {
   const [viewYear, setViewYear] = useState(today.getFullYear());
   const [viewMonth, setViewMonth] = useState(today.getMonth());
 
+  // Header (mobile): month+year must NEVER be cut.
+  // We scale the label down only when it would overflow.
+  const monthLabel = useMemo(() => `${MONTHS[viewMonth]} ${viewYear}`, [viewMonth, viewYear]);
+  const monthWrapRef = useRef<HTMLButtonElement | null>(null);
+  const monthTextRef = useRef<HTMLSpanElement | null>(null);
+  const [monthScale, setMonthScale] = useState(1);
+
+  const recomputeMonthScale = useCallback(() => {
+    const wrap = monthWrapRef.current;
+    const text = monthTextRef.current;
+    if (!wrap || !text) return;
+
+    // IMPORTANT: transform doesn't change scrollWidth, so we can measure safely.
+    const available = wrap.clientWidth;
+    const needed = text.scrollWidth;
+    if (!available || !needed) {
+      setMonthScale(1);
+      return;
+    }
+
+    // small padding to avoid single-pixel cuts
+    const safeAvail = Math.max(0, available - 2);
+    const s = Math.min(1, safeAvail / needed);
+
+    // Don't shrink too much; if it gets tiny, user wouldn't like it.
+    setMonthScale(s < 0.72 ? 0.72 : s);
+  }, []);
+
+  useLayoutEffect(() => {
+    // run after paint + after font loads
+    const raf = window.requestAnimationFrame(recomputeMonthScale);
+    const onResize = () => recomputeMonthScale();
+    window.addEventListener('resize', onResize);
+
+    // when Google Fonts finish loading, recompute again
+    const f = (document as any).fonts as any;
+    if (f?.ready) {
+      f.ready.then(() => {
+        recomputeMonthScale();
+      });
+    }
+
+    return () => {
+      window.cancelAnimationFrame(raf);
+      window.removeEventListener('resize', onResize);
+    };
+  }, [monthLabel, recomputeMonthScale]);
+
   const [showYear, setShowYear] = useState(false);
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
 
@@ -1052,13 +1100,13 @@ function BarberCalendarCore() {
     >
       <div className="max-w-screen-2xl mx-auto px-[clamp(12px,2.5vw,40px)] pt-[clamp(12px,2.5vw,40px)] pb-[clamp(8px,2vw,24px)] h-full flex flex-col select-none">
         
-        {/* --- HEADER FIX: Stack on mobile (flex-col), Row on Desktop (md:flex-row) --- */}
-        <div className="flex flex-col md:flex-row items-center justify-center md:justify-between gap-1 md:gap-6">
+        {/* Header (Phone-first): big logo + month text ALWAYS fits (no cut) */}
+        <div className="flex items-center justify-between gap-3 md:gap-6">
           <img
             src={BRAND.logoLight}
             alt="logo"
-            // Mobile: w-64 (big width), Desktop: h-[22rem] (original height logic)
-            className="w-64 h-auto md:w-auto md:h-[22rem] object-contain cursor-pointer"
+            className="h-[clamp(96px,20vw,160px)] w-auto max-w-[48vw] md:max-w-none md:h-[22rem] object-contain cursor-pointer"
+            onLoad={recomputeMonthScale}
             onClick={() => {
               const now = new Date();
               setViewYear(now.getFullYear());
@@ -1066,13 +1114,27 @@ function BarberCalendarCore() {
               syncFromRemote();
             }}
           />
+
           <button
+            ref={monthWrapRef}
             onClick={() => setShowYear(true)}
-            // Mobile: Center text, Big size. Desktop: Right align, Original size.
-            className="text-[3.5rem] leading-none md:text-7xl font-bold cursor-pointer hover:text-gray-300 select-none text-center md:text-right whitespace-nowrap mt-[-10px] md:mt-0"
+            className="min-w-0 flex-1 overflow-hidden text-right font-bold cursor-pointer hover:text-gray-300 select-none whitespace-nowrap"
             style={{ fontFamily: BRAND.fontTitle }}
+            aria-label="Избор на месец"
+            title="Избери месец"
           >
-            {`${MONTHS[viewMonth]} ${viewYear}`}
+            <span
+              ref={monthTextRef}
+              className="inline-block origin-right"
+              style={{
+                transform: `scale(${monthScale})`,
+                lineHeight: 1,
+                // the actual font-size (scales down via transform when needed)
+                fontSize: 'clamp(2.4rem, 10vw, 3.8rem)',
+              }}
+            >
+              {monthLabel}
+            </span>
           </button>
         </div>
 
