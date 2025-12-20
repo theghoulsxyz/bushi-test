@@ -617,7 +617,7 @@ function BarberCalendarCore() {
     const deltaFromCenter = x - center;
 
     // EASY TRIGGER THRESHOLD: about 22% of width (min 56px)
-    const THRESH = Math.max(56, Math.round(w * 0.22));
+    const THRESH = Math.max(56, Math.round(w * 0.18));
 
     if (deltaFromCenter <= -THRESH) {
       // swipe to previous day
