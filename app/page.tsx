@@ -561,220 +561,116 @@ function BarberCalendarCore() {
 
   const [savedPulse, setSavedPulse] = useState<{ day: string; time: string; ts: number } | null>(null);
 
-  // Swipe gestures (day editor)
-  const swipeStartX = useRef<number | null>(null);
-  const swipeStartY = useRef<number | null>(null);
-  const swipeDX = useRef<number>(0);
-  const swipeDY = useRef<number>(0);
+  // Native iPhone‑style day paging (no JS swipe math):
+// - Horizontal swipe is native scroll-snap.
+// - Vertical scrolling stays 100% native.
+// - Header remains tap-to-close (no swipe handlers there).
+const [panelStyle, setPanelStyle] = useState<React.CSSProperties>({});
 
-  const [swipeStyle, setSwipeStyle] = useState<React.CSSProperties>({});
-  const [panelStyle, setPanelStyle] = useState<React.CSSProperties>({});
-  const gestureModeRef = useRef<'none' | 'horizontal' | 'vertical' | 'scroll'>('none');
+const shiftSelectedDay = (delta: number) => {
+  setSelectedDate((prev) => {
+    if (!prev) return prev;
+    const next = addDays(prev, delta);
+    if (next.getFullYear() !== viewYear || next.getMonth() !== viewMonth) {
+      setViewYear(next.getFullYear());
+      setViewMonth(next.getMonth());
+    }
+    return next;
+  });
+};
 
-  // ✅ iPhone scroll vs swipe tuning:
-  // - Make horizontal swipe less sensitive so vertical scrolling wins.
-  const SWIPE_THRESHOLD = 72; // was 52
-  const VERTICAL_CLOSE_THRESHOLD = 95;
-  const SNAP_EASE = 'cubic-bezier(0.25, 0.9, 0.25, 1)';
+const dayPagerRef = useRef<HTMLDivElement | null>(null);
+const dayPagerSettleRef = useRef<number | null>(null);
+const dayPagerBusyRef = useRef<boolean>(false);
 
-  const H_DRAG_CLAMP = 220;
-  const V_DRAG_CLAMP = 240;
+const centerDayPager = useCallback((behavior: ScrollBehavior = 'auto') => {
+  const el = dayPagerRef.current;
+  if (!el) return;
+  const w = el.clientWidth || 0;
+  if (!w) return;
+  try {
+    el.scrollTo({ left: w, behavior });
+  } catch {
+    el.scrollLeft = w;
+  }
+}, []);
 
-  // intent thresholds (helps iPhone scrolling)
-  const H_INTENT_SLOP = 18;
-  const V_INTENT_SLOP = 10;
-  const INTENT_RATIO = 1.35;
+useEffect(() => {
+  // Reset state whenever a day is opened/changed.
+  setPanelStyle({});
+  setArmedRemove(null);
+  clearArmedTimeout();
 
-  const isTabletOrBigger = () =>
-    typeof window !== 'undefined' &&
-    (window.matchMedia ? window.matchMedia('(min-width: 768px)').matches : window.innerWidth >= 768);
+  // Keep the pager centered on the middle page.
+  if (!selectedDate) return;
+  dayPagerBusyRef.current = true;
+  requestAnimationFrame(() => {
+    centerDayPager('auto');
+    dayPagerBusyRef.current = false;
+  });
+}, [selectedDate, clearArmedTimeout, centerDayPager]);
 
-  useEffect(() => {
-    setSwipeStyle({});
-    setPanelStyle({});
-    gestureModeRef.current = 'none';
-    setArmedRemove(null);
-    clearArmedTimeout();
-  }, [selectedDate, clearArmedTimeout]);
+useEffect(() => () => {
+  if (dayPagerSettleRef.current) window.clearTimeout(dayPagerSettleRef.current);
+}, []);
 
-  useEffect(() => () => clearArmedTimeout(), [clearArmedTimeout]);
+useEffect(() => {
+  const onResize = () => centerDayPager('auto');
+  if (typeof window === 'undefined') return;
+  window.addEventListener('resize', onResize);
+  return () => window.removeEventListener('resize', onResize);
+}, [centerDayPager]);
 
-  const shiftSelectedDay = (delta: number) => {
-    setSelectedDate((prev) => {
-      if (!prev) return prev;
-      const next = addDays(prev, delta);
-      if (next.getFullYear() !== viewYear || next.getMonth() !== viewMonth) {
-        setViewYear(next.getFullYear());
-        setViewMonth(next.getMonth());
-      }
-      return next;
-    });
-  };
+const onDayPagerScroll = () => {
+  const el = dayPagerRef.current;
+  if (!el) return;
+  if (dayPagerBusyRef.current) return;
 
-  const animateShift = (delta: number) => {
-    setSwipeStyle({
-      transform: `translateX(${delta > 0 ? -22 : 22}px)`,
-      opacity: 0.55,
-      transition: `transform 140ms ${SNAP_EASE}, opacity 140ms ${SNAP_EASE}`,
-    });
-    setTimeout(() => {
-      shiftSelectedDay(delta);
-      setSwipeStyle({
-        transform: `translateX(${delta > 0 ? 22 : -22}px)`,
-        opacity: 0.55,
-        transition: 'none',
-      });
+  if (dayPagerSettleRef.current) window.clearTimeout(dayPagerSettleRef.current);
+
+  dayPagerSettleRef.current = window.setTimeout(() => {
+    dayPagerSettleRef.current = null;
+    const node = dayPagerRef.current;
+    if (!node) return;
+    const w = node.clientWidth || 0;
+    if (!w) return;
+
+    const page = Math.round(node.scrollLeft / w); // 0=prev, 1=current, 2=next
+    if (page === 1) return;
+
+    const delta = page === 0 ? -1 : 1;
+
+    dayPagerBusyRef.current = true;
+    shiftSelectedDay(delta);
+
+    // After the day changes, instantly re-center to the middle page.
+    requestAnimationFrame(() => {
       requestAnimationFrame(() => {
-        setSwipeStyle({
-          transform: 'translateX(0)',
-          opacity: 1,
-          transition: `transform 160ms ${SNAP_EASE}, opacity 160ms ${SNAP_EASE}`,
-        });
+        centerDayPager('auto');
+        dayPagerBusyRef.current = false;
       });
-    }, 140);
-  };
-
-  const animateCloseDown = () => {
-    setPanelStyle({
-      transform: 'translateY(160px)',
-      opacity: 0,
-      transition: `transform 170ms ${SNAP_EASE}, opacity 150ms ${SNAP_EASE}`,
     });
-    setTimeout(() => {
-      setSelectedDate(null);
-      setPanelStyle({});
-      setSwipeStyle({});
-      gestureModeRef.current = 'none';
-      setPendingFocus(null);
-    }, 170);
-  };
+  }, 90);
+};
 
-  const onTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
-    // Reset gesture state
-    swipeStartX.current = null;
-    swipeStartY.current = null;
-    swipeDX.current = 0;
-    swipeDY.current = 0;
-    gestureModeRef.current = 'none';
-    setSwipeStyle({ transition: 'none' });
-    setPanelStyle({ transition: 'none', transform: 'translateY(0)', opacity: 1 });
 
-    // If the touch starts on an input/textarea/select/contenteditable, never treat it as a day-swipe.
-    // This keeps typing + vertical scrolling consistent.
-    if (isTypingTarget(e.target as Element | null)) {
-      gestureModeRef.current = 'scroll';
-      return;
-    }
+const CLOSE_EASE = 'cubic-bezier(0.25, 0.9, 0.25, 1)';
 
-    swipeStartX.current = e.touches[0].clientX;
-    swipeStartY.current = e.touches[0].clientY;
-  };
+const animateCloseDown = () => {
+  setPanelStyle({
+    transform: 'translateY(18px)',
+    opacity: 0,
+    transition: `transform 170ms ${CLOSE_EASE}, opacity 170ms ${CLOSE_EASE}`,
+  });
 
-  const onTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
-    if (swipeStartX.current == null || swipeStartY.current == null) return;
+  window.setTimeout(() => {
+    setSelectedDate(null);
+    setPanelStyle({});
+  }, 175);
+};
 
-    if (gestureModeRef.current === 'scroll') return;
+// SAVE / DELETE (SAFE PATCH)
 
-    const dxRaw = e.touches[0].clientX - swipeStartX.current;
-    const dyRaw = e.touches[0].clientY - swipeStartY.current;
-
-    swipeDX.current = dxRaw;
-    swipeDY.current = dyRaw;
-
-    const absX = Math.abs(dxRaw);
-    const absY = Math.abs(dyRaw);
-
-    if (gestureModeRef.current === 'none') {
-      // If it looks like a scroll, let the browser scroll (do NOT capture swipe).
-      if (absY >= V_INTENT_SLOP && absY > absX * 1.05) {
-        gestureModeRef.current = 'scroll';
-        return;
-      }
-
-      // Only start horizontal swipe if clearly horizontal AND moved enough.
-      if (absX >= H_INTENT_SLOP && absX > absY * INTENT_RATIO) {
-        gestureModeRef.current = 'horizontal';
-        // Axis-lock: prevent vertical scroll while swiping days
-        e.currentTarget.style.overflowY = 'hidden';
-      } else {
-        return;
-      }
-
-      // Optional: allow vertical close on tablet when clearly vertical-down
-      if (isTabletOrBigger() && dyRaw > 0 && absY > absX * 1.2) {
-        gestureModeRef.current = 'vertical';
-      }
-    }
-
-    if (gestureModeRef.current === 'vertical') {
-      const dy = clamp(Math.max(dyRaw, 0), 0, V_DRAG_CLAMP);
-      const opacity = Math.max(0.75, 1 - dy / 640);
-      setPanelStyle({ transform: `translateY(${dy}px)`, opacity, transition: 'none' });
-      setSwipeStyle({ transform: 'translateX(0)', transition: 'none' });
-      return;
-    }
-
-    if (gestureModeRef.current === 'horizontal') {
-      const dx = clamp(dxRaw, -H_DRAG_CLAMP, H_DRAG_CLAMP);
-      setSwipeStyle({ transform: `translateX(${dx}px)`, transition: 'none' });
-    }
-  };
-
-  const onTouchEnd = (e: React.TouchEvent<HTMLDivElement>) => {
-    if (swipeStartX.current == null) return;
-
-    const dx = swipeDX.current;
-    const dy = swipeDY.current;
-
-    swipeStartX.current = null;
-    swipeStartY.current = null;
-    swipeDX.current = 0;
-    swipeDY.current = 0;
-
-    // If the gesture was locked as native scroll, do nothing.
-    if (gestureModeRef.current === 'scroll') {
-      gestureModeRef.current = 'none';
-      // restore overflow-y (in case we locked it during a horizontal swipe)
-      e.currentTarget.style.overflowY = '';
-      setSwipeStyle({});
-      setPanelStyle({});
-      return;
-    }
-
-    if (gestureModeRef.current === 'vertical') {
-      if (isTabletOrBigger() && dy >= VERTICAL_CLOSE_THRESHOLD) {
-        animateCloseDown();
-      } else {
-        setPanelStyle({
-          transform: 'translateY(0)',
-          opacity: 1,
-          transition: `transform 160ms ${SNAP_EASE}, opacity 140ms ${SNAP_EASE}`,
-        });
-        setTimeout(() => setPanelStyle({}), 160);
-      }
-      gestureModeRef.current = 'none';
-      e.currentTarget.style.overflowY = '';
-      return;
-    }
-
-    if (gestureModeRef.current === 'horizontal') {
-      if (Math.abs(dx) >= SWIPE_THRESHOLD) {
-        animateShift(dx > 0 ? -1 : 1);
-      } else {
-        setSwipeStyle({ transform: 'translateX(0)', transition: `transform 170ms ${SNAP_EASE}` });
-      }
-      gestureModeRef.current = 'none';
-      e.currentTarget.style.overflowY = '';
-      return;
-    }
-
-    setSwipeStyle({ transform: 'translateX(0)', transition: `transform 160ms ${SNAP_EASE}` });
-    setPanelStyle({ transform: 'translateY(0)', opacity: 1, transition: `transform 160ms ${SNAP_EASE}, opacity 160ms ${SNAP_EASE}` });
-    setTimeout(() => setPanelStyle({}), 160);
-    e.currentTarget.style.overflowY = '';
-  };
-
-  // SAVE / DELETE (SAFE PATCH)
   const saveName = useCallback(
     (day: string, time: string, nameRaw: string) => {
       if (!remoteReady) return;
@@ -837,6 +733,20 @@ function BarberCalendarCore() {
     if (!selectedDayISO) return {};
     return store[selectedDayISO] || {};
   }, [store, selectedDayISO]);
+
+const prevDayISO = useMemo(() => (selectedDate ? toISODate(addDays(selectedDate, -1)) : null), [selectedDate]);
+const nextDayISO = useMemo(() => (selectedDate ? toISODate(addDays(selectedDate, 1)) : null), [selectedDate]);
+
+const prevDayMap = useMemo(() => {
+  if (!prevDayISO) return {};
+  return store[prevDayISO] || {};
+}, [store, prevDayISO]);
+
+const nextDayMap = useMemo(() => {
+  if (!nextDayISO) return {};
+  return store[nextDayISO] || {};
+}, [store, nextDayISO]);
+
 
   useEffect(() => {
     if (!selectedDate) return;
@@ -1560,53 +1470,112 @@ function BarberCalendarCore() {
               </div>
 
               {/* Slots */}
-              <div
-                className="mt-4 flex-1 overflow-y-auto md:overflow-visible"
-                onTouchStart={onTouchStart}
-                onTouchMove={onTouchMove}
-                onTouchEnd={onTouchEnd}
-                onTouchCancel={onTouchEnd}
-                style={{
-                  ...swipeStyle,
-                  touchAction: 'pan-y',
-                  WebkitOverflowScrolling: 'touch',
-                  overscrollBehavior: 'contain',
-                  paddingBottom: keyboardInset ? `${keyboardInset}px` : undefined,
-                }}
-              >
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5" style={{ gridAutoRows: 'minmax(32px,1fr)' }}>
-                  {DAY_SLOTS.map((time) => {
-                    const value = (selectedDayMap as Record<string, string>)[time] || '';
-                    const isSaved = !!(savedPulse && savedPulse.day === selectedDayISO && savedPulse.time === time);
-                    const timeKey = `${selectedDayISO}_${time}`;
-                    const isArmed = armedRemove === timeKey;
-                    const isHighlighted = !!highlight && highlight.day === selectedDayISO && highlight.time === time;
-
-                    return (
-                      <SlotRow
-                        key={timeKey}
-                        dayISO={selectedDayISO}
-                        time={time}
-                        value={value}
-                        isSaved={isSaved}
-                        isArmed={isArmed}
-                        isHighlighted={isHighlighted}
-                        canWrite={remoteReady}
-                        onStartEditing={startEditing}
-                        onStopEditing={stopEditing}
-                        onSave={saveName}
-                        onArm={armRemove}
-                        onConfirmRemove={confirmRemove}
-                        onRevealFocus={revealFocus}
-                      />
-                    );
-                  })}
-                </div>
-
-                {!remoteReady && (
-                  <div className="mt-3 text-xs text-neutral-500 text-center" style={{ fontFamily: BRAND.fontBody }}>
-                    Зареждане от сървъра… (записът е заключен)
+                                          <div className="mt-4 flex-1 min-h-0">
+                <div
+                  ref={dayPagerRef}
+                  onScroll={onDayPagerScroll}
+                  className="h-full w-full overflow-x-auto overflow-y-hidden"
+                  style={{
+                    display: 'flex',
+                    scrollSnapType: 'x mandatory',
+                    WebkitOverflowScrolling: 'touch',
+                    overscrollBehavior: 'contain',
+                  }}
+                >
+                  <div className="shrink-0 w-full h-full" style={{ scrollSnapAlign: 'start' }}>
+                    <div className="h-full overflow-y-hidden opacity-40 select-none pointer-events-none">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5" style={{ gridAutoRows: 'minmax(32px,1fr)' }}>
+                        {DAY_SLOTS.map((time) => {
+                          const value = (prevDayMap as Record<string, string>)[time] || '';
+                          const dayISO = prevDayISO || 'prev';
+                          return (
+                            <div
+                              key={dayISO + '_' + time}
+                              className="flex items-center gap-2 border border-neutral-800/60 bg-black/20 rounded-lg px-3 py-1.5"
+                            >
+                              <div className="w-16 text-xs text-neutral-500" style={{ fontFamily: BRAND.fontBody }}>
+                                {time}
+                              </div>
+                              <div className="flex-1 min-w-0 text-center truncate text-neutral-300" style={{ fontFamily: BRAND.fontBody }}>
+                                {value}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
                   </div>
+
+                  <div className="shrink-0 w-full h-full" style={{ scrollSnapAlign: 'start' }}>
+                    <div
+                      className="h-full overflow-y-auto md:overflow-visible"
+                      style={{
+                        WebkitOverflowScrolling: 'touch',
+                        overscrollBehavior: 'contain',
+                        paddingBottom: keyboardInset ? String(keyboardInset) + 'px' : undefined,
+                      }}
+                    >
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5" style={{ gridAutoRows: 'minmax(32px,1fr)' }}>
+                      {DAY_SLOTS.map((time) => {
+                        const value = (selectedDayMap as Record<string, string>)[time] || '';
+                        const isSaved = !!(savedPulse && savedPulse.day === selectedDayISO && savedPulse.time === time);
+                        const timeKey = `${selectedDayISO}_${time}`;
+                        const isArmed = armedRemove === timeKey;
+                        const isHighlighted = !!highlight && highlight.day === selectedDayISO && highlight.time === time;
+
+                        return (
+                          <SlotRow
+                            key={timeKey}
+                            dayISO={selectedDayISO}
+                            time={time}
+                            value={value}
+                            isSaved={isSaved}
+                            isArmed={isArmed}
+                            isHighlighted={isHighlighted}
+                            canWrite={remoteReady}
+                            onStartEditing={startEditing}
+                            onStopEditing={stopEditing}
+                            onSave={saveName}
+                            onArm={armRemove}
+                            onConfirmRemove={confirmRemove}
+                            onRevealFocus={revealFocus}
+                          />
+                        );
+                      })}
+                    </div>
+
+                    {!remoteReady && (
+                      <div className="mt-3 text-xs text-neutral-500 text-center" style={{ fontFamily: BRAND.fontBody }}>
+                        Зареждане от сървъра… (записът е заключен)
+
+                    </div>
+                  </div>
+
+                  <div className="shrink-0 w-full h-full" style={{ scrollSnapAlign: 'start' }}>
+                    <div className="h-full overflow-y-hidden opacity-40 select-none pointer-events-none">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5" style={{ gridAutoRows: 'minmax(32px,1fr)' }}>
+                        {DAY_SLOTS.map((time) => {
+                          const value = (nextDayMap as Record<string, string>)[time] || '';
+                          const dayISO = nextDayISO || 'next';
+                          return (
+                            <div
+                              key={dayISO + '_' + time}
+                              className="flex items-center gap-2 border border-neutral-800/60 bg-black/20 rounded-lg px-3 py-1.5"
+                            >
+                              <div className="w-16 text-xs text-neutral-500" style={{ fontFamily: BRAND.fontBody }}>
+                                {time}
+                              </div>
+                              <div className="flex-1 min-w-0 text-center truncate text-neutral-300" style={{ fontFamily: BRAND.fontBody }}>
+                                {value}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
                 )}
               </div>
             </div>
