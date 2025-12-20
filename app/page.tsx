@@ -1019,7 +1019,7 @@ function BarberCalendarCore() {
           <img
             src={BRAND.logoLight}
             alt="logo"
-            className="w-auto cursor-pointer h-[clamp(96px,18vw,150px)] sm:h-60 md:h-[22rem]"
+            className="w-auto cursor-pointer h-[clamp(110px,20vw,170px)] sm:h-60 md:h-[22rem]"
             onClick={() => {
               const now = new Date();
               setViewYear(now.getFullYear());
