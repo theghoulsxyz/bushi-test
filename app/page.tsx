@@ -217,6 +217,10 @@ function saveBackup(store: Store) {
 // =============================================================================
 // Memoized slot row
 // =============================================================================
+// Suggestions are simple strings (person names) used in <datalist>.
+// Keeping this as a dedicated alias makes it easy to evolve later.
+type Suggestion = string;
+
 type SlotRowProps = {
   // Always-present basics
   time: string;
