@@ -561,38 +561,24 @@ function BarberCalendarCore() {
 
   const [savedPulse, setSavedPulse] = useState<{ day: string; time: string; ts: number } | null>(null);
 
-  // Swipe gestures (day editor)
-  const swipeStartX = useRef<number | null>(null);
-  const swipeStartY = useRef<number | null>(null);
-  const swipeDX = useRef<number>(0);
-  const swipeDY = useRef<number>(0);
-
+  // Day switcher strip (iPhone-like feel): native horizontal paging, no fighting with vertical scroll.
   const [swipeStyle, setSwipeStyle] = useState<React.CSSProperties>({});
   const [panelStyle, setPanelStyle] = useState<React.CSSProperties>({});
-  const gestureModeRef = useRef<'none' | 'horizontal' | 'vertical' | 'scroll'>('none');
 
-  // ✅ iPhone scroll vs swipe tuning:
-  // - Make horizontal swipe less sensitive so vertical scrolling wins.
-  const SWIPE_THRESHOLD = 72; // was 52
-  const VERTICAL_CLOSE_THRESHOLD = 95;
   const SNAP_EASE = 'cubic-bezier(0.25, 0.9, 0.25, 1)';
 
-  const H_DRAG_CLAMP = 220;
-  const V_DRAG_CLAMP = 240;
+  const dayPagerRef = useRef<HTMLDivElement | null>(null);
+  const dayPagerLockRef = useRef(false);
+  const dayPagerSettleTimer = useRef<number | null>(null);
 
-  // intent thresholds (helps iPhone scrolling)
-  const H_INTENT_SLOP = 26;
-  const V_INTENT_SLOP = 10;
-  const INTENT_RATIO = 1.6;
-
-  const isTabletOrBigger = () =>
-    typeof window !== 'undefined' &&
-    (window.matchMedia ? window.matchMedia('(min-width: 768px)').matches : window.innerWidth >= 768);
-
-  useEffect(() => {
+  const centerDayPager = useCallback(() => {
+    const el = dayPagerRef.current;
+    if (!el) return;
+    el.scrollLeft = el.clientWidth; // center page
+  }, []);
+useEffect(() => {
     setSwipeStyle({});
     setPanelStyle({});
-    gestureModeRef.current = 'none';
     setArmedRemove(null);
     clearArmedTimeout();
   }, [selectedDate, clearArmedTimeout]);
@@ -634,6 +620,55 @@ function BarberCalendarCore() {
     }, 140);
   };
 
+  // iPhone-like day swipe strip behavior (native horizontal paging).
+  useEffect(() => {
+    if (!selectedDate) return;
+    const t = window.setTimeout(() => centerDayPager(), 0);
+    return () => window.clearTimeout(t);
+  }, [selectedDate, centerDayPager]);
+
+  useEffect(() => {
+    const onResize = () => centerDayPager();
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, [centerDayPager]);
+
+  useEffect(() => {
+    return () => {
+      if (dayPagerSettleTimer.current != null) window.clearTimeout(dayPagerSettleTimer.current);
+    };
+  }, []);
+
+  const onDayPagerScroll = useCallback(() => {
+    const el = dayPagerRef.current;
+    if (!el || dayPagerLockRef.current || !selectedDate) return;
+
+    if (dayPagerSettleTimer.current != null) window.clearTimeout(dayPagerSettleTimer.current);
+
+    dayPagerSettleTimer.current = window.setTimeout(() => {
+      const el2 = dayPagerRef.current;
+      if (!el2 || dayPagerLockRef.current || !selectedDate) return;
+
+      const w = el2.clientWidth || 1;
+      const page = Math.round(el2.scrollLeft / w); // 0=prev, 1=center, 2=next
+
+      if (page === 0) {
+        dayPagerLockRef.current = true;
+        animateShift(-1);
+      } else if (page === 2) {
+        dayPagerLockRef.current = true;
+        animateShift(1);
+      }
+
+      requestAnimationFrame(() => centerDayPager());
+
+      window.setTimeout(() => {
+        dayPagerLockRef.current = false;
+      }, 240);
+    }, 90);
+  }, [animateShift, selectedDate, centerDayPager]);
+
+
   const animateCloseDown = () => {
     setPanelStyle({
       transform: 'translateY(160px)',
@@ -644,125 +679,11 @@ function BarberCalendarCore() {
       setSelectedDate(null);
       setPanelStyle({});
       setSwipeStyle({});
-      gestureModeRef.current = 'none';
-      setPendingFocus(null);
+        setPendingFocus(null);
     }, 170);
   };
 
-  const onTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
-    // If the gesture starts on an input/textarea/etc, don't hijack the touch.
-    // This keeps vertical scrolling and text selection reliable on iOS.
-    swipeStartX.current = null;
-    swipeStartY.current = null;
-    swipeDX.current = 0;
-    swipeDY.current = 0;
-    gestureModeRef.current = 'none';
-
-    if (isTypingTarget(e.target as Element | null)) return;
-
-    swipeStartX.current = e.touches[0].clientX;
-    swipeStartY.current = e.touches[0].clientY;
-    setSwipeStyle({ transition: 'none' });
-    setPanelStyle({ transition: 'none', transform: 'translateY(0)', opacity: 1 });
-  };
-
-  const onTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
-    if (swipeStartX.current == null || swipeStartY.current == null) return;
-
-    const dxRaw = e.touches[0].clientX - swipeStartX.current;
-    const dyRaw = e.touches[0].clientY - swipeStartY.current;
-
-    swipeDX.current = dxRaw;
-    swipeDY.current = dyRaw;
-
-    const absX = Math.abs(dxRaw);
-    const absY = Math.abs(dyRaw);
-
-    // If we already decided this gesture is a scroll, don't try to interpret it later.
-    if (gestureModeRef.current === 'scroll') return;
-
-    if (gestureModeRef.current === 'none') {
-      // If it looks like a scroll, lock to scroll mode and let the browser handle it.
-      if (absY >= V_INTENT_SLOP && absY > absX * 1.1) {
-        gestureModeRef.current = 'scroll';
-        return;
-      }
-
-      // Only start horizontal swipe if clearly horizontal AND moved enough.
-      if (absX >= H_INTENT_SLOP && absX > absY * INTENT_RATIO) {
-        gestureModeRef.current = 'horizontal';
-      } else {
-        return;
-      }
-
-      // Optional: allow vertical close on tablet when clearly vertical-down
-      if (isTabletOrBigger() && dyRaw > 0 && absY > absX * 1.2) {
-        gestureModeRef.current = 'vertical';
-      }
-    }
-
-    if (gestureModeRef.current === 'vertical') {
-      const dy = clamp(Math.max(dyRaw, 0), 0, V_DRAG_CLAMP);
-      const opacity = Math.max(0.75, 1 - dy / 640);
-      setPanelStyle({ transform: `translateY(${dy}px)`, opacity, transition: 'none' });
-      setSwipeStyle({ transform: 'translateX(0)', transition: 'none' });
-      return;
-    }
-
-    if (gestureModeRef.current === 'horizontal') {
-      const dx = clamp(dxRaw, -H_DRAG_CLAMP, H_DRAG_CLAMP);
-      setSwipeStyle({ transform: `translateX(${dx}px)`, transition: 'none' });
-    }
-  };
-
-  const onTouchEnd = () => {
-    if (swipeStartX.current == null) return;
-
-    const dx = swipeDX.current;
-    const dy = swipeDY.current;
-
-    swipeStartX.current = null;
-    swipeStartY.current = null;
-    swipeDX.current = 0;
-    swipeDY.current = 0;
-
-    // If it was a scroll gesture, do nothing (native scroll already happened).
-    if (gestureModeRef.current === 'scroll') {
-      gestureModeRef.current = 'none';
-      setSwipeStyle({});
-      setPanelStyle({});
-      return;
-    }
-
-    if (gestureModeRef.current === 'vertical') {
-      if (isTabletOrBigger() && dy >= VERTICAL_CLOSE_THRESHOLD) {
-        animateCloseDown();
-      } else {
-        setPanelStyle({
-          transform: 'translateY(0)',
-          opacity: 1,
-          transition: `transform 160ms ${SNAP_EASE}, opacity 140ms ${SNAP_EASE}`,
-        });
-        setTimeout(() => setPanelStyle({}), 160);
-      }
-      gestureModeRef.current = 'none';
-      return;
-    }
-
-    if (gestureModeRef.current === 'horizontal') {
-      if (Math.abs(dx) >= SWIPE_THRESHOLD) {
-        animateShift(dx > 0 ? -1 : 1);
-      } else {
-        setSwipeStyle({ transform: 'translateX(0)', transition: `transform 170ms ${SNAP_EASE}` });
-      }
-      gestureModeRef.current = 'none';
-      return;
-    }
-
-    setSwipeStyle({ transform: 'translateX(0)', transition: `transform 160ms ${SNAP_EASE}` });
-    setPanelStyle({ transform: 'translateY(0)', opacity: 1, transition: `transform 160ms ${SNAP_EASE}, opacity 160ms ${SNAP_EASE}` });
-    setTimeout(() => setPanelStyle({}), 160);
-  };
+  
 
   // SAVE / DELETE (SAFE PATCH)
   const saveName = useCallback(
@@ -1539,23 +1460,73 @@ function BarberCalendarCore() {
               {/* Header: tap to close */}
               <div
                 className="flex items-center justify-between cursor-pointer"
-                onMouseDown={(e) => { e.stopPropagation(); animateCloseDown(); }}
-                onTouchStart={(e) => { e.stopPropagation(); animateCloseDown(); }}
+                onClick={(e) => { e.stopPropagation(); animateCloseDown(); }}
                 title="Tap to close"
               >
                 <h3 className="text-2xl md:text-3xl font-bold" style={{ fontFamily: BRAND.fontTitle }}>
                   {WEEKDAYS_FULL[(selectedDate.getDay() + 6) % 7]} {selectedDate.getDate()} {MONTHS[selectedDate.getMonth()]} {selectedDate.getFullYear()}
                 </h3>
                 <div className="w-10 md:w-12" />
+
+              {/* iPhone-like day swipe strip */}
+              <div className="mt-2">
+                <div
+                  ref={dayPagerRef}
+                  onScroll={onDayPagerScroll}
+                  className="bushi-daypager -mx-1 flex overflow-x-auto"
+                  style={{
+                    scrollSnapType: 'x mandatory',
+                    WebkitOverflowScrolling: 'touch',
+                                        touchAction: 'pan-x',
+                  }}
+                >
+                  <div className="flex-none w-full px-1" style={{ scrollSnapAlign: 'start',  }}>
+                    <button
+                      type="button"
+                      className="w-full h-9 rounded-xl border border-neutral-700/60 bg-neutral-900/40 hover:bg-neutral-900/55 active:bg-neutral-900/70 text-sm md:text-base flex items-center justify-center opacity-70"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        animateShift(-1);
+                        requestAnimationFrame(() => centerDayPager());
+                      }}
+                    >
+                      ← Previous day
+                    </button>
+                  </div>
+
+                  <div className="flex-none w-full px-1" style={{ scrollSnapAlign: 'start',  }}>
+                    <div className="w-full h-9 rounded-xl border border-neutral-700/60 bg-neutral-900/60 text-sm md:text-base flex items-center justify-center">
+                      Swipe to change day ↔
+                    </div>
+                  </div>
+
+                  <div className="flex-none w-full px-1" style={{ scrollSnapAlign: 'start',  }}>
+                    <button
+                      type="button"
+                      className="w-full h-9 rounded-xl border border-neutral-700/60 bg-neutral-900/40 hover:bg-neutral-900/55 active:bg-neutral-900/70 text-sm md:text-base flex items-center justify-center opacity-70"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        animateShift(1);
+                        requestAnimationFrame(() => centerDayPager());
+                      }}
+                    >
+                      Next day →
+                    </button>
+                  </div>
+                </div>
+
+                <style jsx>{`
+                  .bushi-daypager::-webkit-scrollbar {
+                    display: none;
+                  }
+                `}</style>
+              </div>
+
               </div>
 
               {/* Slots */}
               <div
                 className="mt-4 flex-1 overflow-y-auto md:overflow-visible"
-                onTouchStart={onTouchStart}
-                onTouchMove={onTouchMove}
-                onTouchEnd={onTouchEnd}
-                onTouchCancel={onTouchEnd}
                 style={{
                   ...swipeStyle,
                   touchAction: 'pan-y',
