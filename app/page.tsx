@@ -2,6 +2,7 @@
 // Bushi Admin — Month grid + Day editor (Native Scroll Snap Fix) + Search + Closest available
 // FIX: iOS fast-swipe blank/half-render bug by shifting day ONLY after scroll settles (debounced "scroll end"),
 //      plus shift lock + remount key + reset vertical scroll.
+// FIX: Month header now fully responsive on iPhone (logo + month title scale).
 
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
@@ -614,7 +615,6 @@ function BarberCalendarCore() {
       const now = Date.now();
       // hard guard: prevents "skips 2 days" on fast double swipes
       if (now - lastShiftAtRef.current < 260) {
-        // ensure we recover to center
         centerDayScroller('auto');
         return;
       }
@@ -639,7 +639,7 @@ function BarberCalendarCore() {
 
       shiftSelectedDay(delta);
 
-      // safety unlock (useLayoutEffect below will also unlock)
+      // safety unlock
       window.setTimeout(() => {
         isShiftingRef.current = false;
       }, 520);
@@ -695,7 +695,6 @@ function BarberCalendarCore() {
 
     clearScrollEndTimer();
 
-    // center horizontal scroller after layout
     requestAnimationFrame(() => {
       centerDayScroller('auto');
 
@@ -703,12 +702,10 @@ function BarberCalendarCore() {
       const v = dayContentRef.current;
       if (v) {
         v.scrollTop = 0;
-        // small repaint nudge for iOS
         // eslint-disable-next-line @typescript-eslint/no-unused-expressions
         (v as any).offsetHeight;
       }
 
-      // unlock shifting after the browser has settled
       requestAnimationFrame(() => {
         isShiftingRef.current = false;
       });
@@ -1058,7 +1055,7 @@ function BarberCalendarCore() {
           <img
             src={BRAND.logoLight}
             alt="logo"
-            className="h-72 md:h-[22rem] w-auto cursor-pointer"
+            className="h-[clamp(96px,18vw,220px)] md:h-[22rem] w-auto cursor-pointer"
             onClick={() => {
               const now = new Date();
               setViewYear(now.getFullYear());
@@ -1066,10 +1063,15 @@ function BarberCalendarCore() {
               syncFromRemote();
             }}
           />
+
           <button
             onClick={() => setShowYear(true)}
-            className="text-3xl sm:text-4xl md:text-7xl font-bold cursor-pointer hover:text-gray-300 select-none text-right flex-1 min-w-0 whitespace-nowrap"
-            style={{ fontFamily: BRAND.fontTitle }}
+            className="flex-1 min-w-0 text-right font-bold cursor-pointer hover:text-gray-300 select-none whitespace-nowrap leading-none"
+            style={{
+              fontFamily: BRAND.fontTitle,
+              fontSize: 'clamp(28px, 6.2vw, 86px)',
+              lineHeight: 1,
+            }}
           >
             {`${MONTHS[viewMonth]} ${viewYear}`}
           </button>
@@ -1156,6 +1158,7 @@ function BarberCalendarCore() {
         </div>
       </div>
 
+      {/* (rest unchanged) */}
       {/* Availability Modal */}
       {showAvail && (
         <div
@@ -1287,7 +1290,7 @@ function BarberCalendarCore() {
         </div>
       )}
 
-      {/* Day Editor Modal (Fixed with Native Scroll Snap) */}
+      {/* Day Editor Modal */}
       {selectedDate && selectedDayISO && (
         <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/80" onMouseDown={() => setSelectedDate(null)}>
           <div
@@ -1316,10 +1319,10 @@ function BarberCalendarCore() {
                  className="absolute inset-0 flex overflow-x-auto snap-x snap-mandatory no-scrollbar"
                  style={{ WebkitOverflowScrolling: 'touch', overscrollBehaviorX: 'contain' as any }}
                >
-                  {/* PREV (Placeholder) */}
+                  {/* PREV */}
                   <div className="w-full h-full flex-shrink-0 snap-center" />
 
-                  {/* CURRENT (Content) — key forces full remount (helps iOS repaint) */}
+                  {/* CURRENT */}
                   <div
                     key={selectedDayISO}
                     ref={dayContentRef}
@@ -1330,13 +1333,7 @@ function BarberCalendarCore() {
                       paddingBottom: keyboardInset ? `${keyboardInset}px` : undefined,
                     }}
                   >
-                     <div
-                       className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 px-0.5"
-                       style={{
-                         // important: keep this auto-height so overflow-y can scroll correctly
-                         gridAutoRows: 'min-content',
-                       }}
-                     >
+                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 px-0.5" style={{ gridAutoRows: 'min-content' }}>
                        {DAY_SLOTS.map((time) => {
                          const value = (selectedDayMap as Record<string, string>)[time] || '';
                          const isSaved = !!(savedPulse && savedPulse.day === selectedDayISO && savedPulse.time === time);
@@ -1354,7 +1351,7 @@ function BarberCalendarCore() {
                              isArmed={isArmed}
                              isHighlighted={isHighlighted}
                              canWrite={remoteReady}
-                             onStartEditing={startEditing}
+                             onStartEditing={() => { editingRef.current = true; }}
                              onStopEditing={stopEditing}
                              onSave={saveName}
                              onArm={armRemove}
@@ -1371,7 +1368,7 @@ function BarberCalendarCore() {
                      )}
                   </div>
 
-                  {/* NEXT (Placeholder) */}
+                  {/* NEXT */}
                   <div className="w-full h-full flex-shrink-0 snap-center" />
                </div>
             </div>
