@@ -561,35 +561,41 @@ function BarberCalendarCore() {
 
   const [savedPulse, setSavedPulse] = useState<{ day: string; time: string; ts: number } | null>(null);
 
-  // Day pager (iPhone-like: native horizontal paging + native vertical scroll)
-  const dayPagerRef = useRef<HTMLDivElement | null>(null);
-  const dayPagerSettleTimer = useRef<number | null>(null);
+  // Swipe gestures (day editor)
+  const swipeStartX = useRef<number | null>(null);
+  const swipeStartY = useRef<number | null>(null);
+  const swipeDX = useRef<number>(0);
+  const swipeDY = useRef<number>(0);
 
+  const [swipeStyle, setSwipeStyle] = useState<React.CSSProperties>({});
+  const [panelStyle, setPanelStyle] = useState<React.CSSProperties>({});
+  const gestureModeRef = useRef<'none' | 'horizontal' | 'vertical' | 'scroll'>('none');
+
+  // ✅ iPhone scroll vs swipe tuning:
+  // - Make horizontal swipe less sensitive so vertical scrolling wins.
+  const SWIPE_THRESHOLD = 72; // was 52
+  const VERTICAL_CLOSE_THRESHOLD = 95;
   const SNAP_EASE = 'cubic-bezier(0.25, 0.9, 0.25, 1)';
 
-  const recenterDayPager = useCallback(() => {
-    const el = dayPagerRef.current;
-    if (!el) return;
-    // We keep the current day in the middle page (index 1).
-    el.scrollTo({ left: el.clientWidth, behavior: 'auto' });
-  }, []);
+  const H_DRAG_CLAMP = 220;
+  const V_DRAG_CLAMP = 240;
+
+  // intent thresholds (helps iPhone scrolling)
+  const H_INTENT_SLOP = 18;
+  const V_INTENT_SLOP = 10;
+  const INTENT_RATIO = 1.35;
+
+  const isTabletOrBigger = () =>
+    typeof window !== 'undefined' &&
+    (window.matchMedia ? window.matchMedia('(min-width: 768px)').matches : window.innerWidth >= 768);
 
   useEffect(() => {
+    setSwipeStyle({});
     setPanelStyle({});
+    gestureModeRef.current = 'none';
     setArmedRemove(null);
     clearArmedTimeout();
-
-    if (!selectedDate) return;
-    // After opening (or changing day), ensure the pager is centered.
-    requestAnimationFrame(() => recenterDayPager());
-  }, [selectedDate, clearArmedTimeout, recenterDayPager]);
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const onResize = () => recenterDayPager();
-    window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
-  }, [recenterDayPager]);
+  }, [selectedDate, clearArmedTimeout]);
 
   useEffect(() => () => clearArmedTimeout(), [clearArmedTimeout]);
 
@@ -605,6 +611,29 @@ function BarberCalendarCore() {
     });
   };
 
+  const animateShift = (delta: number) => {
+    setSwipeStyle({
+      transform: `translateX(${delta > 0 ? -22 : 22}px)`,
+      opacity: 0.55,
+      transition: `transform 140ms ${SNAP_EASE}, opacity 140ms ${SNAP_EASE}`,
+    });
+    setTimeout(() => {
+      shiftSelectedDay(delta);
+      setSwipeStyle({
+        transform: `translateX(${delta > 0 ? 22 : -22}px)`,
+        opacity: 0.55,
+        transition: 'none',
+      });
+      requestAnimationFrame(() => {
+        setSwipeStyle({
+          transform: 'translateX(0)',
+          opacity: 1,
+          transition: `transform 160ms ${SNAP_EASE}, opacity 160ms ${SNAP_EASE}`,
+        });
+      });
+    }, 140);
+  };
+
   const animateCloseDown = () => {
     setPanelStyle({
       transform: 'translateY(160px)',
@@ -614,107 +643,135 @@ function BarberCalendarCore() {
     setTimeout(() => {
       setSelectedDate(null);
       setPanelStyle({});
-      if (dayPagerSettleTimer.current != null) {
-        window.clearTimeout(dayPagerSettleTimer.current);
-        dayPagerSettleTimer.current = null;
-      }
+      setSwipeStyle({});
+      gestureModeRef.current = 'none';
       setPendingFocus(null);
     }, 170);
   };
 
-  const onDayPagerScroll = useCallback(() => {
-    const el = dayPagerRef.current;
-    if (!el || !selectedDate) return;
+  const onTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
+    // Reset gesture state
+    swipeStartX.current = null;
+    swipeStartY.current = null;
+    swipeDX.current = 0;
+    swipeDY.current = 0;
+    gestureModeRef.current = 'none';
+    setSwipeStyle({ transition: 'none' });
+    setPanelStyle({ transition: 'none', transform: 'translateY(0)', opacity: 1 });
 
-    if (dayPagerSettleTimer.current != null) {
-      window.clearTimeout(dayPagerSettleTimer.current);
-      dayPagerSettleTimer.current = null;
+    // If the touch starts on an input/textarea/select/contenteditable, never treat it as a day-swipe.
+    // This keeps typing + vertical scrolling consistent.
+    if (isTypingTarget(e.target as Element | null)) {
+      gestureModeRef.current = 'scroll';
+      return;
     }
 
-    dayPagerSettleTimer.current = window.setTimeout(() => {
-      const w = el.clientWidth || 1;
-      const page = Math.round(el.scrollLeft / w);
+    swipeStartX.current = e.touches[0].clientX;
+    swipeStartY.current = e.touches[0].clientY;
+  };
 
-      // page: 0 = previous day, 1 = current day, 2 = next day
-      if (page === 0) {
-        shiftSelectedDay(-1);
-      } else if (page === 2) {
-        shiftSelectedDay(1);
-      } else {
-        // Keep perfectly centered if the snap lands slightly off.
-        if (Math.abs(el.scrollLeft - w) > 1) recenterDayPager();
+  const onTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (swipeStartX.current == null || swipeStartY.current == null) return;
+
+    if (gestureModeRef.current === 'scroll') return;
+
+    const dxRaw = e.touches[0].clientX - swipeStartX.current;
+    const dyRaw = e.touches[0].clientY - swipeStartY.current;
+
+    swipeDX.current = dxRaw;
+    swipeDY.current = dyRaw;
+
+    const absX = Math.abs(dxRaw);
+    const absY = Math.abs(dyRaw);
+
+    if (gestureModeRef.current === 'none') {
+      // If it looks like a scroll, let the browser scroll (do NOT capture swipe).
+      if (absY >= V_INTENT_SLOP && absY > absX * 1.05) {
+        gestureModeRef.current = 'scroll';
+        return;
       }
-    }, 90);
-  }, [selectedDate, shiftSelectedDay, recenterDayPager]);
 
-  const renderDayEditorPage = (date: Date) => {
-    const dayISO = toISODate(date);
-    const dayMap = (store[dayISO] || {}) as Record<string, string>;
+      // Only start horizontal swipe if clearly horizontal AND moved enough.
+      if (absX >= H_INTENT_SLOP && absX > absY * INTENT_RATIO) {
+        gestureModeRef.current = 'horizontal';
+        // Axis-lock: prevent vertical scroll while swiping days
+        e.currentTarget.style.overflowY = 'hidden';
+      } else {
+        return;
+      }
 
-    return (
-      <div className="flex h-full flex-col">
-        <div
-          className="flex-1 overflow-y-auto md:overflow-visible"
-          style={{
-            WebkitOverflowScrolling: 'touch',
-            overscrollBehavior: 'contain',
-            paddingBottom: keyboardInset ? `${keyboardInset}px` : undefined,
-          }}
-        >
-          <div className="sticky top-0 z-10 pb-4 bg-neutral-950/90 backdrop-blur">
-            <div className="flex items-center justify-between select-none">
-              <h3 className="text-2xl md:text-3xl font-bold" style={{ fontFamily: BRAND.fontTitle }}>
-                {WEEKDAYS_FULL[(date.getDay() + 6) % 7]}, {date.getDate()} {MONTHS[date.getMonth()]} {date.getFullYear()}
-              </h3>
-              <button
-                type="button"
-                className="w-10 md:w-12 h-10 md:h-12 rounded-xl border border-neutral-700/70 bg-neutral-900/60 hover:bg-neutral-800/70 active:scale-[0.98] transition"
-                onMouseDown={(e) => e.stopPropagation()}
-                onClick={(e) => { e.stopPropagation(); animateCloseDown(); }}
-                aria-label="Close"
-                title="Close"
-              >
-                <span className="text-lg md:text-xl">✕</span>
-              </button>
-            </div>
-          </div>
+      // Optional: allow vertical close on tablet when clearly vertical-down
+      if (isTabletOrBigger() && dyRaw > 0 && absY > absX * 1.2) {
+        gestureModeRef.current = 'vertical';
+      }
+    }
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5" style={{ gridAutoRows: 'minmax(32px,1fr)' }}>
-            {DAY_SLOTS.map((time) => {
-              const value = dayMap[time] || '';
-              const isSaved = !!(savedPulse && savedPulse.day === dayISO && savedPulse.time === time);
-              const timeKey = `${dayISO}_${time}`;
-              const isArmed = armedRemove === timeKey;
-              const isHighlighted = !!highlight && highlight.day === dayISO && highlight.time === time;
+    if (gestureModeRef.current === 'vertical') {
+      const dy = clamp(Math.max(dyRaw, 0), 0, V_DRAG_CLAMP);
+      const opacity = Math.max(0.75, 1 - dy / 640);
+      setPanelStyle({ transform: `translateY(${dy}px)`, opacity, transition: 'none' });
+      setSwipeStyle({ transform: 'translateX(0)', transition: 'none' });
+      return;
+    }
 
-              return (
-                <SlotRow
-                  key={timeKey}
-                  dayISO={dayISO}
-                  time={time}
-                  value={value}
-                  isSaved={isSaved}
-                  isArmed={isArmed}
-                  isHighlighted={isHighlighted}
-                  pendingFocus={pendingFocus}
-                  setPendingFocus={setPendingFocus}
-                  onSave={saveName}
-                  onArm={armRemove}
-                  onConfirmRemove={confirmRemove}
-                  onRevealFocus={revealFocus}
-                />
-              );
-            })}
-          </div>
+    if (gestureModeRef.current === 'horizontal') {
+      const dx = clamp(dxRaw, -H_DRAG_CLAMP, H_DRAG_CLAMP);
+      setSwipeStyle({ transform: `translateX(${dx}px)`, transition: 'none' });
+    }
+  };
 
-          {!remoteReady && (
-            <div className="mt-3 text-xs text-neutral-500 text-center" style={{ fontFamily: BRAND.fontBody }}>
-              Зареждане от сървъра… (записът е заключен)
-            </div>
-          )}
-        </div>
-      </div>
-    );
+  const onTouchEnd = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (swipeStartX.current == null) return;
+
+    const dx = swipeDX.current;
+    const dy = swipeDY.current;
+
+    swipeStartX.current = null;
+    swipeStartY.current = null;
+    swipeDX.current = 0;
+    swipeDY.current = 0;
+
+    // If the gesture was locked as native scroll, do nothing.
+    if (gestureModeRef.current === 'scroll') {
+      gestureModeRef.current = 'none';
+      // restore overflow-y (in case we locked it during a horizontal swipe)
+      e.currentTarget.style.overflowY = '';
+      setSwipeStyle({});
+      setPanelStyle({});
+      return;
+    }
+
+    if (gestureModeRef.current === 'vertical') {
+      if (isTabletOrBigger() && dy >= VERTICAL_CLOSE_THRESHOLD) {
+        animateCloseDown();
+      } else {
+        setPanelStyle({
+          transform: 'translateY(0)',
+          opacity: 1,
+          transition: `transform 160ms ${SNAP_EASE}, opacity 140ms ${SNAP_EASE}`,
+        });
+        setTimeout(() => setPanelStyle({}), 160);
+      }
+      gestureModeRef.current = 'none';
+      e.currentTarget.style.overflowY = '';
+      return;
+    }
+
+    if (gestureModeRef.current === 'horizontal') {
+      if (Math.abs(dx) >= SWIPE_THRESHOLD) {
+        animateShift(dx > 0 ? -1 : 1);
+      } else {
+        setSwipeStyle({ transform: 'translateX(0)', transition: `transform 170ms ${SNAP_EASE}` });
+      }
+      gestureModeRef.current = 'none';
+      e.currentTarget.style.overflowY = '';
+      return;
+    }
+
+    setSwipeStyle({ transform: 'translateX(0)', transition: `transform 160ms ${SNAP_EASE}` });
+    setPanelStyle({ transform: 'translateY(0)', opacity: 1, transition: `transform 160ms ${SNAP_EASE}, opacity 160ms ${SNAP_EASE}` });
+    setTimeout(() => setPanelStyle({}), 160);
+    e.currentTarget.style.overflowY = '';
   };
 
   // SAVE / DELETE (SAFE PATCH)
@@ -776,6 +833,10 @@ function BarberCalendarCore() {
 
   const selectedDayISO = useMemo(() => (selectedDate ? toISODate(selectedDate) : null), [selectedDate]);
 
+  const selectedDayMap = useMemo(() => {
+    if (!selectedDayISO) return {};
+    return store[selectedDayISO] || {};
+  }, [store, selectedDayISO]);
 
   useEffect(() => {
     if (!selectedDate) return;
@@ -1485,29 +1546,68 @@ function BarberCalendarCore() {
             onTouchStart={(e) => e.stopPropagation()}
           >
             <div className="flex h-full flex-col">
-              {/* iPhone-like Day Pager (native horizontal paging + native vertical scroll) */}
+              {/* Header: tap to close */}
               <div
-                ref={dayPagerRef}
-                className="flex-1 overflow-x-auto overflow-y-hidden"
-                onScroll={onDayPagerScroll}
+                className="flex items-center justify-between cursor-pointer"
+                onMouseDown={(e) => { e.stopPropagation(); animateCloseDown(); }}
+                onTouchStart={(e) => { e.stopPropagation(); animateCloseDown(); }}
+                title="Tap to close"
+              >
+                <h3 className="text-2xl md:text-3xl font-bold" style={{ fontFamily: BRAND.fontTitle }}>
+                  {WEEKDAYS_FULL[(selectedDate.getDay() + 6) % 7]} {selectedDate.getDate()} {MONTHS[selectedDate.getMonth()]} {selectedDate.getFullYear()}
+                </h3>
+                <div className="w-10 md:w-12" />
+              </div>
+
+              {/* Slots */}
+              <div
+                className="mt-4 flex-1 overflow-y-auto md:overflow-visible"
+                onTouchStart={onTouchStart}
+                onTouchMove={onTouchMove}
+                onTouchEnd={onTouchEnd}
+                onTouchCancel={onTouchEnd}
                 style={{
-                  scrollSnapType: 'x mandatory',
+                  ...swipeStyle,
+                  touchAction: 'pan-y',
                   WebkitOverflowScrolling: 'touch',
                   overscrollBehavior: 'contain',
-                  touchAction: 'pan-x pan-y',
+                  paddingBottom: keyboardInset ? `${keyboardInset}px` : undefined,
                 }}
               >
-                <div className="flex h-full">
-                  {([-1, 0, 1] as const).map((delta) => {
-                    const d = addDays(selectedDate, delta);
-                    const iso = toISODate(d);
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5" style={{ gridAutoRows: 'minmax(32px,1fr)' }}>
+                  {DAY_SLOTS.map((time) => {
+                    const value = (selectedDayMap as Record<string, string>)[time] || '';
+                    const isSaved = !!(savedPulse && savedPulse.day === selectedDayISO && savedPulse.time === time);
+                    const timeKey = `${selectedDayISO}_${time}`;
+                    const isArmed = armedRemove === timeKey;
+                    const isHighlighted = !!highlight && highlight.day === selectedDayISO && highlight.time === time;
+
                     return (
-                      <div key={iso} className="w-full flex-none h-full" style={{ scrollSnapAlign: 'center' }}>
-                        {renderDayEditorPage(d)}
-                      </div>
+                      <SlotRow
+                        key={timeKey}
+                        dayISO={selectedDayISO}
+                        time={time}
+                        value={value}
+                        isSaved={isSaved}
+                        isArmed={isArmed}
+                        isHighlighted={isHighlighted}
+                        canWrite={remoteReady}
+                        onStartEditing={startEditing}
+                        onStopEditing={stopEditing}
+                        onSave={saveName}
+                        onArm={armRemove}
+                        onConfirmRemove={confirmRemove}
+                        onRevealFocus={revealFocus}
+                      />
                     );
                   })}
                 </div>
+
+                {!remoteReady && (
+                  <div className="mt-3 text-xs text-neutral-500 text-center" style={{ fontFamily: BRAND.fontBody }}>
+                    Зареждане от сървъра… (записът е заключен)
+                  </div>
+                )}
               </div>
             </div>
           </div>
