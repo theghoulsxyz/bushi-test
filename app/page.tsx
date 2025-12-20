@@ -1,6 +1,7 @@
 'use client';
-// Bushi Admin — Month grid + Day editor (Native Scroll Snap Fix) + Search + Closest available
-// UPDATE: Faster Swipe Transition (Reduced Debounce + Visual Pop)
+// Bushi Admin — Fixed "Infinite Hold" bug & "Blank Space" bug
+// Interaction Logic: Day changes ONLY on finger lift. 
+// Rendering Logic: Interaction is locked until the new day fully loads.
 
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
@@ -12,12 +13,12 @@ const BRAND = {
   shopName: 'BushiBarberShop',
   logoLight: '/bushii-logo.png',
   accent: '#ffffff',
-  fontTitle: "'Bebas Neue', sans-serif", // month + weekday labels
-  fontNumbers: "'UnifrakturCook', cursive", // gothic for day numbers
-  fontBody: "'Inter', sans-serif", // clean font for clock + person names
+  fontTitle: "'Bebas Neue', sans-serif",
+  fontNumbers: "'UnifrakturCook', cursive",
+  fontBody: "'Inter', sans-serif",
 };
 
-const PIN_CODE = '2580'; // Change this to your own code
+const PIN_CODE = '2580';
 
 function injectBrandFonts() {
   if (typeof document === 'undefined') return;
@@ -45,27 +46,23 @@ function injectBushiStyles() {
       0% { transform: scale(1); opacity: 1; }
       100% { transform: scale(1.02); opacity: 0.88; }
     }
-    /* NEW: Snappy transition for day content */
     @keyframes bushiFastFade {
-      0% { opacity: 0.5; transform: translateX(4px); }
-      100% { opacity: 1; transform: translateX(0); }
+      0% { opacity: 0.6; transform: scale(0.99); }
+      100% { opacity: 1; transform: scale(1); }
     }
     .bushi-animate-in {
-      animation: bushiFastFade 0.14s ease-out forwards;
+      animation: bushiFastFade 0.2s ease-out forwards;
     }
+    .no-scrollbar::-webkit-scrollbar { display: none; }
+    .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
     
-    /* Hide scrollbar for Chrome, Safari and Opera */
-    .no-scrollbar::-webkit-scrollbar {
-      display: none;
+    /* Stronger snap settings */
+    .bushi-snap-container {
+      scroll-snap-type: x mandatory;
+      scroll-behavior: smooth; 
     }
-    /* Hide scrollbar for IE, Edge and Firefox */
-    .no-scrollbar {
-      -ms-overflow-style: none;  /* IE and Edge */
-      scrollbar-width: none;  /* Firefox */
-    }
-
-    /* Make snap feel more decisive (supported on iOS Safari 16+) */
     .bushi-snap-stop {
+      scroll-snap-align: center;
       scroll-snap-stop: always;
     }
   `;
@@ -83,7 +80,7 @@ const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(ma
 
 function monthMatrix(year: number, month: number) {
   const first = new Date(year, month, 1);
-  const startDay = (first.getDay() + 6) % 7; // Monday = 0
+  const startDay = (first.getDay() + 6) % 7; 
   const rows: Date[][] = [];
   let cur = 1 - startDay;
   for (let r = 0; r < 6; r++) {
@@ -107,7 +104,7 @@ function isTypingTarget(el: Element | null) {
 const slotInputId = (dayISO: string, time: string) => `slot_${dayISO.replace(/[^0-9]/g, '')}_${time.replace(/[^0-9]/g, '')}`;
 
 // =============================================================================
-// Weekdays / Months (Bulgarian)
+// Weekdays / Months
 // =============================================================================
 const WEEKDAYS_SHORT = ['Пон', 'Вто', 'Сря', 'Чет', 'Пет', 'Съб', 'Нед'];
 const WEEKDAYS_FULL = ['Понеделник', 'Вторник', 'Сряда', 'Четвъртък', 'Петък', 'Събота', 'Неделя'];
@@ -117,7 +114,7 @@ const MONTHS = ['Януари', 'Февруари', 'Март', 'Април', '�
 // Slots
 // =============================================================================
 const START_HOUR = 8;
-const END_HOUR = 22; // last slot 21:30
+const END_HOUR = 22; 
 const SLOT_MINUTES = 30;
 
 function buildSlots() {
@@ -154,7 +151,7 @@ const dayFillRatio = (dayISO: string, store: Store) => {
 };
 
 // =============================================================================
-// Remote Sync (Supabase via API route)
+// Remote Sync
 // =============================================================================
 const API_ENDPOINT = '/api/appointments';
 
@@ -198,10 +195,9 @@ async function patchClearSlot(day: string, time: string): Promise<boolean> {
 }
 
 // =============================================================================
-// Local backup (safety net)
+// Backup
 // =============================================================================
 const BACKUP_KEY = 'bushi_store_backup_v1';
-
 function saveBackup(store: Store) {
   try {
     const payload = { ts: Date.now(), data: store };
@@ -210,7 +206,7 @@ function saveBackup(store: Store) {
 }
 
 // =============================================================================
-// Memoized slot row
+// Slot Row
 // =============================================================================
 type SlotRowProps = {
   dayISO: string;
@@ -306,7 +302,6 @@ const SlotRow = React.memo(
                   : 'bg-neutral-900/60 hover:bg-neutral-800/70 border-neutral-700/50'
               }`}
               aria-label={isArmed ? 'Потвърди' : 'Премахни'}
-              title={isArmed ? 'Потвърди' : 'Премахни'}
             >
               <img
                 src={isArmed ? '/tick-green.png' : '/razor.png'}
@@ -338,7 +333,7 @@ const SlotRow = React.memo(
 );
 
 // =============================================================================
-// Main Calendar Component
+// Main Component
 // =============================================================================
 function BarberCalendarCore() {
   useEffect(() => {
@@ -367,7 +362,6 @@ function BarberCalendarCore() {
   const [store, setStore] = useState<Store>({});
   const [remoteReady, setRemoteReady] = useState(false);
 
-  // Keyboard inset for iPhone typing visibility
   const [keyboardInset, setKeyboardInset] = useState(0);
 
   useEffect(() => {
@@ -383,7 +377,6 @@ function BarberCalendarCore() {
     computeInset();
     vv.addEventListener('resize', computeInset);
     vv.addEventListener('scroll', computeInset);
-
     return () => {
       vv.removeEventListener('resize', computeInset);
       vv.removeEventListener('scroll', computeInset);
@@ -438,17 +431,14 @@ function BarberCalendarCore() {
   useEffect(() => {
     cancelledSyncRef.current = false;
     let interval: number | null = null;
-
     (async () => {
       await syncFromRemote();
       interval = window.setInterval(syncFromRemote, 60000);
     })();
-
     const handleVisibility = () => {
       if (document.visibilityState === 'visible') syncFromRemote();
     };
     document.addEventListener('visibilitychange', handleVisibility);
-
     return () => {
       cancelledSyncRef.current = true;
       document.removeEventListener('visibilitychange', handleVisibility);
@@ -474,13 +464,9 @@ function BarberCalendarCore() {
 
   const revealFocus = useCallback((day: string, time: string, inputEl: HTMLInputElement) => {
     window.setTimeout(() => {
-      try {
-        inputEl.scrollIntoView({ block: 'center', behavior: 'smooth' });
-      } catch {}
+      try { inputEl.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch {}
       window.setTimeout(() => {
-        try {
-          inputEl.scrollIntoView({ block: 'center', behavior: 'smooth' });
-        } catch {}
+        try { inputEl.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch {}
       }, 140);
     }, 60);
   }, []);
@@ -494,7 +480,6 @@ function BarberCalendarCore() {
     };
   }, [showYear, selectedDate, showSearch, showAvail]);
 
-  // Keys
   useEffect(() => {
     if (!showSearch) return;
     const t = window.setTimeout(() => {
@@ -514,7 +499,6 @@ function BarberCalendarCore() {
       }
       const activeTyping = isTypingTarget(document.activeElement);
       if (activeTyping) return;
-
       const isCtrlK = (e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K');
       const isSlash = e.key === '/';
       if (isCtrlK || isSlash) {
@@ -526,7 +510,6 @@ function BarberCalendarCore() {
     return () => window.removeEventListener('keydown', onKey);
   }, [showSearch, showYear, showAvail]);
 
-  // Armed remove
   const [armedRemove, setArmedRemove] = useState<string | null>(null);
   const armedTimeoutRef = useRef<number | null>(null);
 
@@ -550,34 +533,31 @@ function BarberCalendarCore() {
   );
 
   const [savedPulse, setSavedPulse] = useState<{ day: string; time: string; ts: number } | null>(null);
-
   const SNAP_EASE = 'cubic-bezier(0.25, 0.9, 0.25, 1)';
   const [panelStyle, setPanelStyle] = useState<React.CSSProperties>({});
 
   // ===========================================================================
-  // DAY SWIPE (iPhone-like) — Faster detection + Visual Pop
+  // DAY SWIPE ENGINE (Fixed for Infinite Hold & Blank Space)
   // ===========================================================================
   const dayScrollerRef = useRef<HTMLDivElement>(null);
-  const isShiftingRef = useRef(false);
-  const dayCommitTimerRef = useRef<number | null>(null);
-
-  // hard lock to prevent double-commit (skipping 2 days)
-  const commitLockUntilRef = useRef(0);
+  const isProcessingRef = useRef(false); // Locks interaction during render to prevent blank space
 
   const centerDayScroller = useCallback((behavior: 'auto' | 'smooth' = 'auto') => {
     const sc = dayScrollerRef.current;
     if (!sc) return;
     const w = sc.clientWidth || sc.offsetWidth;
     if (!w) return;
-    try {
-      if (behavior === 'smooth') sc.scrollTo({ left: w, behavior: 'smooth' });
-      else sc.scrollLeft = w;
-    } catch {
-      sc.scrollLeft = w;
-    }
+    // Force center
+    sc.scrollTo({ left: w, behavior: behavior });
   }, []);
 
-  const shiftSelectedDay = useCallback((delta: number) => {
+  const changeDay = useCallback((delta: number) => {
+    if (delta === 0) return;
+    
+    // Prevent double-swipes while React is still rendering the previous one
+    if (isProcessingRef.current) return;
+    isProcessingRef.current = true; 
+
     setSelectedDate((prev) => {
       if (!prev) return prev;
       const next = addDays(prev, delta);
@@ -587,112 +567,44 @@ function BarberCalendarCore() {
     });
   }, []);
 
-  const commitDaySwipe = useCallback(
-    (delta: number) => {
-      const now = Date.now();
-      commitLockUntilRef.current = now + 320; // prevents 2 commits per gesture
-      isShiftingRef.current = true;
-
-      // immediately re-center so we never show placeholder/blank
-      centerDayScroller('auto');
-
-      shiftSelectedDay(delta);
-    },
-    [centerDayScroller, shiftSelectedDay],
-  );
-
-  const decideAndCommitDay = useCallback(() => {
+  // ONLY decide to change day when user Lifts finger
+  const handleTouchEnd = useCallback(() => {
     const sc = dayScrollerRef.current;
     if (!sc) return;
-
-    const now = Date.now();
-    if (now < commitLockUntilRef.current) {
-      // keep it centered while locked
-      centerDayScroller('auto');
-      return;
-    }
-    if (isShiftingRef.current) return;
-
-    // If user is typing, don't change day (prevents accidental swipes)
     if (editingRef.current || isSlotInputFocused()) {
       centerDayScroller('smooth');
       return;
     }
 
-    const w = sc.clientWidth || sc.offsetWidth;
-    if (!w) return;
+    const w = sc.clientWidth;
+    const scroll = sc.scrollLeft;
+    const threshold = w * 0.22; // Must swipe at least 22%
 
-    const x = sc.scrollLeft;
-    const center = w;
-    const deltaFromCenter = x - center;
-
-    // EASY TRIGGER THRESHOLD: about 22% of width (min 56px)
-    const THRESH = Math.max(56, Math.round(w * 0.22));
-
-    if (deltaFromCenter <= -THRESH) {
-      // swipe to previous day
-      commitDaySwipe(-1);
-      return;
+    if (scroll < threshold) {
+      changeDay(-1); // Swipe Right (Prev)
+    } else if (scroll > (w * 2 - threshold)) {
+      changeDay(1); // Swipe Left (Next)
+    } else {
+      // Didn't swipe far enough, bounce back
+      centerDayScroller('smooth');
     }
-    if (deltaFromCenter >= THRESH) {
-      // swipe to next day
-      commitDaySwipe(+1);
-      return;
-    }
+  }, [centerDayScroller, changeDay, isSlotInputFocused]);
 
-    // not enough -> just snap back to center
-    centerDayScroller('smooth');
-  }, [centerDayScroller, commitDaySwipe, isSlotInputFocused]);
-
-  const scheduleDayCommit = useCallback(() => {
-    if (dayCommitTimerRef.current != null) window.clearTimeout(dayCommitTimerRef.current);
-
-    // CHANGED: Reduced timeout from 80ms to 40ms to make it feel snappier
-    dayCommitTimerRef.current = window.setTimeout(() => {
-      dayCommitTimerRef.current = null;
-
-      const sc = dayScrollerRef.current;
-      if (!sc) return;
-
-      // wait until scroll is stable (iOS momentum)
-      const x1 = sc.scrollLeft;
-      requestAnimationFrame(() => {
-        const x2 = sc.scrollLeft;
-        // CHANGED: Slightly relaxed stability check (3px vs 2px) to trigger sooner
-        if (Math.abs(x2 - x1) > 3) {
-          // still moving -> reschedule
-          scheduleDayCommit();
-          return;
-        }
-        decideAndCommitDay();
-      });
-    }, 40); 
-  }, [decideAndCommitDay]);
-
-  // Center on middle slide when day changes, and keep a short lock
+  // Reset to center INSTANTLY after day changes
+  // This prevents the blank space because we are already centered when paint happens
   useLayoutEffect(() => {
     if (!selectedDate) return;
+    
+    // Reset immediately without animation
+    centerDayScroller('auto');
 
-    // short lock during re-render to prevent any extra commits
-    commitLockUntilRef.current = Date.now() + 160;
+    // Unlock interaction after a tiny delay to ensure paint is done
+    const t = setTimeout(() => {
+      isProcessingRef.current = false;
+    }, 50);
 
-    const centerNow = () => centerDayScroller('auto');
-
-    centerNow();
-    requestAnimationFrame(centerNow);
-    requestAnimationFrame(() => {
-      centerNow();
-      isShiftingRef.current = false;
-    });
-
-    return () => {};
+    return () => clearTimeout(t);
   }, [selectedDate, centerDayScroller]);
-
-  useEffect(() => {
-    return () => {
-      if (dayCommitTimerRef.current != null) window.clearTimeout(dayCommitTimerRef.current);
-    };
-  }, []);
 
   useEffect(() => {
     setPanelStyle({});
@@ -754,7 +666,6 @@ function BarberCalendarCore() {
     (day: string, time: string) => {
       if (!remoteReady) return;
       clearArmedTimeout();
-
       setStore((prev) => {
         const next: Store = { ...prev };
         if (next[day]) {
@@ -764,7 +675,6 @@ function BarberCalendarCore() {
         saveBackup(next);
         return next;
       });
-
       patchClearSlot(day, time);
       setArmedRemove(null);
     },
@@ -821,19 +731,14 @@ function BarberCalendarCore() {
     setSelectedDate(d);
   };
 
-  // Closest available
-  type AvailHit = { dayISO: string; time: string };
-
-  const closestAvail: AvailHit[] = useMemo(() => {
+  const closestAvail = useMemo(() => {
     const COUNT = 18;
     const MAX_DAYS = 120;
-    const out: AvailHit[] = [];
-
+    const out: { dayISO: string; time: string }[] = [];
     let cur = new Date(`${todayISO}T00:00:00`);
     for (let i = 0; i < MAX_DAYS && out.length < COUNT; i++) {
       const dayISO = toISODate(cur);
       const dayMap = store[dayISO] || {};
-
       for (const slot of DAY_SLOTS) {
         const v = (dayMap as Record<string, string>)[slot];
         if (!v || v.trim().length === 0) {
@@ -847,7 +752,7 @@ function BarberCalendarCore() {
   }, [store, todayISO]);
 
   const closestGrouped = useMemo(() => {
-    const m = new Map<string, AvailHit[]>();
+    const m = new Map<string, { dayISO: string; time: string }[]>();
     for (const h of closestAvail) {
       if (!m.has(h.dayISO)) m.set(h.dayISO, []);
       m.get(h.dayISO)!.push(h);
@@ -872,13 +777,10 @@ function BarberCalendarCore() {
     setPendingFocus({ day: dayISOKey, time, ts: Date.now() });
   };
 
-  // Search
-  type Hit = { dayISO: string; time: string; name: string };
-
-  const hits: Hit[] = useMemo(() => {
+  const hits = useMemo(() => {
     const q = searchQ.trim().toLowerCase();
     if (!q) return [];
-    const out: Hit[] = [];
+    const out: { dayISO: string; time: string; name: string }[] = [];
     for (const [dayISOKey, dayMap] of Object.entries(store)) {
       if (dayISOKey < todayISO) continue;
       for (const [time, name] of Object.entries(dayMap || {})) {
@@ -892,7 +794,7 @@ function BarberCalendarCore() {
   }, [store, searchQ, todayISO]);
 
   const groupedHits = useMemo(() => {
-    const groups = new Map<string, Hit[]>();
+    const groups = new Map<string, typeof hits>();
     for (const h of hits) {
       if (!groups.has(h.dayISO)) groups.set(h.dayISO, []);
       groups.get(h.dayISO)!.push(h);
@@ -913,7 +815,7 @@ function BarberCalendarCore() {
     'w-14 md:w-16 h-10 md:h-11 rounded-2xl border border-neutral-700/70 bg-neutral-900/65 hover:bg-neutral-800/75 transition grid place-items-center shadow-[0_14px_40px_rgba(0,0,0,0.75)]';
   const weekendEmojiClass = 'text-[18px] md:text-[20px] leading-none';
 
-  // Month gestures (preserved)
+  // Month gestures
   const monthStartX = useRef<number | null>(null);
   const monthStartY = useRef<number | null>(null);
   const monthDX = useRef<number>(0);
@@ -921,7 +823,6 @@ function BarberCalendarCore() {
   const monthModeRef = useRef<'none' | 'horizontal'>('none');
   const [monthStyle, setMonthStyle] = useState<React.CSSProperties>({});
   const monthBlockClickRef = useRef(false);
-
   const MONTH_SWIPE_THRESHOLD = 70;
   const MONTH_H_CLAMP = 260;
 
@@ -1023,7 +924,6 @@ function BarberCalendarCore() {
     monthBlockClickRef.current = false;
   };
 
-  // Year Modal
   const [yearStyle, setYearStyle] = useState<React.CSSProperties>({});
 
   return (
@@ -1321,7 +1221,7 @@ function BarberCalendarCore() {
             onMouseDown={(e) => e.stopPropagation()}
             onTouchStart={(e) => e.stopPropagation()}
           >
-            {/* Header: Tap to Close (NO SWIPE HERE) */}
+            {/* Header: Tap to Close */}
             <div className="flex-shrink-0 flex items-center justify-between cursor-pointer mb-4" onClick={animateCloseDown} title="Tap to close">
               <h3 className="text-2xl md:text-3xl font-bold" style={{ fontFamily: BRAND.fontTitle }}>
                 {WEEKDAYS_FULL[(selectedDate.getDay() + 6) % 7]} {selectedDate.getDate()} {MONTHS[selectedDate.getMonth()]} {selectedDate.getFullYear()}
@@ -1329,23 +1229,20 @@ function BarberCalendarCore() {
               <div className="w-10 md:w-12" />
             </div>
 
-            {/* Body: Swipe anywhere + Scroll */}
+            {/* Body: Day Swipe (Logic moved to onTouchEnd to prevent loops) */}
             <div className="flex-1 relative w-full min-h-0">
               <div
                 ref={dayScrollerRef}
-                onScroll={scheduleDayCommit}
-                onTouchEnd={scheduleDayCommit}
-                onTouchCancel={scheduleDayCommit}
-                onPointerUp={scheduleDayCommit}
-                onMouseUp={scheduleDayCommit}
-                className="absolute inset-0 flex overflow-x-auto snap-x snap-mandatory no-scrollbar min-h-0"
+                onTouchEnd={handleTouchEnd}
+                onMouseUp={handleTouchEnd}
+                className="absolute inset-0 flex overflow-x-auto bushi-snap-container no-scrollbar min-h-0"
                 style={{ WebkitOverflowScrolling: 'touch', overscrollBehaviorX: 'contain' }}
               >
                 {/* PREV placeholder */}
-                <div className="w-full h-full flex-shrink-0 snap-center bushi-snap-stop min-h-0" />
+                <div className="w-full h-full flex-shrink-0 bushi-snap-stop min-h-0" />
 
-                {/* CURRENT content (iOS-safe) */}
-                <div className="w-full h-full flex-shrink-0 snap-center bushi-snap-stop min-h-0">
+                {/* CURRENT content */}
+                <div className="w-full h-full flex-shrink-0 bushi-snap-stop min-h-0">
                   <div
                     className="h-full min-h-0 overflow-y-auto"
                     style={{
@@ -1354,7 +1251,6 @@ function BarberCalendarCore() {
                       paddingBottom: keyboardInset ? `${keyboardInset}px` : undefined,
                     }}
                   >
-                    {/* CHANGED: Added key + animation class for snappier transition */}
                     <div key={selectedDayISO} className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 px-0.5 bushi-animate-in" style={{ gridAutoRows: 'min-content' }}>
                       {DAY_SLOTS.map((time) => {
                         const value = (selectedDayMap as Record<string, string>)[time] || '';
@@ -1393,7 +1289,7 @@ function BarberCalendarCore() {
                 </div>
 
                 {/* NEXT placeholder */}
-                <div className="w-full h-full flex-shrink-0 snap-center bushi-snap-stop min-h-0" />
+                <div className="w-full h-full flex-shrink-0 bushi-snap-stop min-h-0" />
               </div>
             </div>
           </div>
