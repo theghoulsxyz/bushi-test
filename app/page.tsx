@@ -217,237 +217,124 @@ function saveBackup(store: Store) {
 // =============================================================================
 // Memoized slot row
 // =============================================================================
-// Suggestions are simple strings (person names) used in <datalist>.
-// Keeping this as a dedicated alias makes it easy to evolve later.
-type Suggestion = string;
-
 type SlotRowProps = {
-  // Always-present basics
+  dayISO: string;
   time: string;
   value: string;
-  suggestions: Suggestion[];
+  isSaved: boolean;
+  isArmed: boolean;
+  isHighlighted: boolean;
+  canWrite: boolean;
+  onStartEditing: () => void;
+  onStopEditing: () => void;
+  onSave: (day: string, time: string, nameRaw: string) => void;
+  onArm: (timeKey: string) => void;
+  onConfirmRemove: (day: string, time: string) => void;
 
-  // --- Simple mode (used by the iOS pager view) ---
-  onChange?: (value: string) => void;
-
-  // --- Rich mode (existing day editor) ---
-  dayISO?: string;
-  canWrite?: boolean;
-  onSave?: (dayISO: string, time: string, value: string) => void;
-  isSaved?: boolean;
-
-  armedRemoveKey?: string | null;
-  setArmedRemoveKey?: (k: string | null) => void;
-  onRequestRemove?: (dayISO: string, time: string) => void;
-  onRequestSuggest?: (dayISO: string, time: string) => void;
-
-  // ✅ iPhone keyboard safe-area logic
-  onFocusChanged?: (isFocused: boolean) => void;
-};
-
-
-// Lightweight row used by the iOS-native pager day view.
-// It is intentionally simple so iOS scroll and swipe don't fight each other.
-type SlotRowLiteProps = {
-  time: string;
-  value: string;
-  suggestions: string[];
-  onChange: (next: string) => void;
-};
-
-const SlotRowLite = ({ time, value, suggestions, onChange }: SlotRowLiteProps) => {
-  const listId = `bushi-suggestions-${time.replace(/[^0-9]/g, '')}`;
-  return (
-    <div className="grid grid-cols-[72px,1fr] gap-2 items-center">
-      <div className="text-xs text-neutral-300 tabular-nums">{time}</div>
-      <div className="relative">
-        <input
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          list={suggestions.length ? listId : undefined}
-          placeholder="Име"
-          className="w-full rounded-lg border border-neutral-700 bg-neutral-950/60 px-3 py-2 text-sm text-neutral-100 outline-none focus:border-neutral-500"
-          autoCapitalize="words"
-          autoComplete="off"
-          inputMode="text"
-        />
-        {suggestions.length ? (
-          <datalist id={listId}>
-            {suggestions.map((s) => (
-              <option key={s} value={s} />
-            ))}
-          </datalist>
-        ) : null}
-      </div>
-    </div>
-  );
+  // ✅ iPhone keyboard safety: ensure focused input is visible
+  onRevealFocus: (day: string, time: string, inputEl: HTMLInputElement) => void;
 };
 
 const SlotRow = React.memo(
-  function SlotRow(props: SlotRowProps) {
-  const {
+  function SlotRow({
+    dayISO,
     time,
     value,
-    suggestions,
-    onChange,
-
-    dayISO,
-    canWrite,
-    onSave,
     isSaved,
-    armedRemoveKey,
-    setArmedRemoveKey,
-    onRequestRemove,
-    onRequestSuggest,
-    onFocusChanged,
-  } = props;
+    isArmed,
+    isHighlighted,
+    canWrite,
+    onStartEditing,
+    onStopEditing,
+    onSave,
+    onArm,
+    onConfirmRemove,
+    onRevealFocus,
+  }: SlotRowProps) {
+    const hasName = (value || '').trim().length > 0;
+    const timeKey = `${dayISO}_${time}`;
+    const inputId = slotInputId(dayISO, time);
 
-  // Local draft + debounce so we don't spam saves on every keystroke.
-  const [draft, setDraft] = React.useState(value);
-  const debounceRef = React.useRef<number | null>(null);
-
-  React.useEffect(() => {
-    setDraft(value);
-  }, [value]);
-
-  const flush = React.useCallback(
-    (next?: string) => {
-      const v = typeof next === 'string' ? next : draft;
-      if (debounceRef.current) window.clearTimeout(debounceRef.current);
-      debounceRef.current = null;
-
-      if (typeof onChange === 'function') {
-        onChange(v);
-        return;
-      }
-      if (typeof onSave === 'function' && dayISO) {
-        onSave(dayISO, time, v);
-      }
-    },
-    [draft, onChange, onSave, dayISO, time],
-  );
-
-  const schedule = (next: string) => {
-    setDraft(next);
-    if (debounceRef.current) window.clearTimeout(debounceRef.current);
-    debounceRef.current = window.setTimeout(() => flush(next), 260);
-  };
-
-  // -------------------------
-  // Simple mode (Pager): no "armed delete", no suggest/remove buttons.
-  // -------------------------
-  if (typeof onChange === 'function' && typeof onSave !== 'function') {
     return (
-      <div className="flex items-center gap-2">
-        <div className="w-[64px] shrink-0 text-sm text-neutral-300">{time}</div>
+      <div
+        className={`relative rounded-2xl bg-neutral-900/80 border px-3 py-1 flex items-center gap-3 overflow-hidden transition ${
+          isHighlighted ? 'border-white/60 ring-2 ring-white/20' : 'border-neutral-800'
+        }`}
+        style={isHighlighted ? { animation: 'bushiPulse 220ms ease-in-out infinite alternate' } : undefined}
+      >
+        <div
+          className="text-[1.05rem] md:text-[1.15rem] font-semibold tabular-nums min-w-[4.9rem] text-center select-none"
+          style={{ fontFamily: BRAND.fontBody }}
+        >
+          {time}
+        </div>
 
-        <input
-          value={draft}
-          onChange={(e) => schedule(e.target.value)}
-          onBlur={() => flush()}
-          placeholder="—"
-          className="flex-1 rounded-xl border border-neutral-700 bg-neutral-950/60 px-3 py-2 text-[15px] text-neutral-100 outline-none focus:border-neutral-500"
-          inputMode="text"
-          autoCorrect="off"
-          autoCapitalize="none"
-          onFocus={() => onFocusChanged?.(true)}
-          onBlurCapture={() => onFocusChanged?.(false)}
-          list={suggestions.length ? `sug-${time}` : undefined}
+        <div className="flex-1 min-w-0 flex items-center gap-2">
+          <input
+            id={inputId}
+            key={timeKey + value}
+            defaultValue={value}
+            onFocus={(e) => {
+              e.currentTarget.dataset.orig = e.currentTarget.value;
+              onStartEditing();
+              // ✅ keep it visible above the iPhone keyboard
+              onRevealFocus(dayISO, time, e.currentTarget);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                const el = e.target as HTMLInputElement;
+                const v = el.value;
+                el.dataset.orig = v;
+                if (canWrite) onSave(dayISO, time, v);
+                el.blur();
+              }
+            }}
+            onBlur={(e) => {
+              const el = e.currentTarget;
+              const orig = (el.dataset.orig ?? '').trim();
+              const now = (el.value ?? '').trim();
+
+              window.setTimeout(onStopEditing, 120);
+              if (!canWrite) return;
+              if (orig === now) return;
+
+              el.dataset.orig = el.value;
+              onSave(dayISO, time, el.value);
+            }}
+            className="block w-full text-white bg-[rgb(10,10,10)] border border-neutral-700/70 focus:border-white/70 focus:outline-none focus:ring-0 rounded-lg px-3 py-1.5 text-center transition-all duration-200"
+            style={{ fontFamily: BRAND.fontBody }}
+          />
+
+          {hasName && (
+            <button
+              onClick={() => (isArmed ? onConfirmRemove(dayISO, time) : onArm(timeKey))}
+              className={`shrink-0 w-8 h-8 md:w-9 md:h-9 rounded-lg grid place-items-center transition border ${
+                isArmed
+                  ? 'bg-red-900/30 border-red-600/70'
+                  : 'bg-neutral-900/60 hover:bg-neutral-800/70 border-neutral-700/50'
+              }`}
+              aria-label={isArmed ? 'Потвърди' : 'Премахни'}
+              title={isArmed ? 'Потвърди' : 'Премахни'}
+            >
+              <img
+                src={isArmed ? '/tick-green.png' : '/razor.png'}
+                alt={isArmed ? 'Confirm' : 'Remove'}
+                className="w-4 h-4 md:w-5 md:h-5 object-contain"
+              />
+            </button>
+          )}
+        </div>
+
+        <img
+          src="/tick-green.png"
+          alt="saved"
+          className={`pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 md:w-6 md:h-6 transition-opacity duration-300 ${
+            isSaved ? 'opacity-100' : 'opacity-0'
+          }`}
         />
-
-        {suggestions.length ? (
-          <datalist id={`sug-${time}`}>
-            {suggestions.map((s) => (
-              <option key={s} value={s} />
-            ))}
-          </datalist>
-        ) : null}
       </div>
     );
-  }
-
-  // -------------------------
-  // Rich mode (Original): keeps your existing "armed delete" UX.
-  // -------------------------
-  const rowKey = `${dayISO || ''}__${time}`;
-  const isArmed = !!armedRemoveKey && armedRemoveKey === rowKey;
-
-  return (
-    <div className="flex items-center gap-2">
-      <div className="w-[64px] shrink-0 text-sm text-neutral-300">{time}</div>
-
-      <input
-        value={draft}
-        onChange={(e) => schedule(e.target.value)}
-        onBlur={() => flush()}
-        placeholder="—"
-        className="flex-1 rounded-xl border border-neutral-700 bg-neutral-950/60 px-3 py-2 text-[15px] text-neutral-100 outline-none focus:border-neutral-500"
-        inputMode="text"
-        autoCorrect="off"
-        autoCapitalize="none"
-        disabled={!canWrite}
-        onFocus={() => onFocusChanged?.(true)}
-        onBlurCapture={() => onFocusChanged?.(false)}
-        list={suggestions.length ? `sug-${rowKey}` : undefined}
-      />
-
-      {suggestions.length ? (
-        <datalist id={`sug-${rowKey}`}>
-          {suggestions.map((s) => (
-            <option key={s} value={s} />
-          ))}
-        </datalist>
-      ) : null}
-
-      {/* Suggest */}
-      <button
-        type="button"
-        className="hidden sm:inline-flex items-center justify-center h-10 px-3 rounded-xl border border-neutral-700 bg-neutral-900/60 hover:bg-neutral-800 text-neutral-200 text-sm"
-        onMouseDown={(e) => e.stopPropagation()}
-        onTouchStart={(e) => e.stopPropagation()}
-        onClick={() => dayISO && onRequestSuggest?.(dayISO, time)}
-        title="Suggestions"
-      >
-        ✦
-      </button>
-
-      {/* Delete (armed) */}
-      <button
-        type="button"
-        className={`inline-flex items-center justify-center h-10 px-3 rounded-xl border text-sm ${
-          isArmed
-            ? 'border-red-500 bg-red-600/20 text-red-200'
-            : 'border-neutral-700 bg-neutral-900/60 hover:bg-neutral-800 text-neutral-200'
-        }`}
-        onMouseDown={(e) => e.stopPropagation()}
-        onTouchStart={(e) => e.stopPropagation()}
-        onClick={() => {
-          if (!dayISO) return;
-          if (!setArmedRemoveKey) return;
-
-          if (!isArmed) {
-            setArmedRemoveKey(rowKey);
-            window.setTimeout(() => setArmedRemoveKey(null), 1600);
-            return;
-          }
-          setArmedRemoveKey(null);
-          onRequestRemove?.(dayISO, time);
-        }}
-        title={isArmed ? 'Tap again to delete' : 'Delete'}
-      >
-        {isArmed ? 'Delete?' : '🗑'}
-      </button>
-
-      {/* Saved dot */}
-      <div
-        className="w-3 h-3 shrink-0 rounded-full bg-emerald-400/80 transition-opacity duration-300"
-        style={{ opacity: isSaved ? 1 : 0 }}
-      />
-    </div>
-  );
-}
-
-,
+  },
   (prev, next) =>
     prev.value === next.value &&
     prev.isSaved === next.isSaved &&
@@ -683,6 +570,18 @@ function BarberCalendarCore() {
   const [swipeStyle, setSwipeStyle] = useState<React.CSSProperties>({});
   const [panelStyle, setPanelStyle] = useState<React.CSSProperties>({});
   const gestureModeRef = useRef<'none' | 'horizontal' | 'vertical'>('none');
+  const ignoreSwipeRef = useRef(false);
+
+  const shouldIgnoreSwipeTarget = (t: EventTarget | null) => {
+    const el = t as HTMLElement | null;
+    if (!el) return false;
+    const tag = (el.tagName || '').toLowerCase();
+    if (tag === 'input' || tag === 'textarea' || tag === 'select' || tag === 'button') return true;
+    if (el.isContentEditable) return true;
+    // any element can opt-out
+    if (el.closest?.('[data-noswipe="true"]')) return true;
+    return false;
+  };
 
   // ✅ iPhone scroll vs swipe tuning:
   // - Make horizontal swipe less sensitive so vertical scrolling wins.
@@ -762,100 +661,89 @@ function BarberCalendarCore() {
     }, 170);
   };
 
-  const onTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
+  const onTouchStart = (e: React.TouchEvent) => {
+    // Only track 1-finger swipes. Let everything else behave normally (pinch-zoom, etc).
+    if (e.touches.length !== 1) {
+      ignoreSwipeRef.current = true;
+      return;
+    }
+
+    // If user starts on an input / editable element, never treat it as a swipe.
+    if (shouldIgnoreSwipeTarget(e.target)) {
+      ignoreSwipeRef.current = true;
+      return;
+    }
+
+    ignoreSwipeRef.current = false;
     swipeStartX.current = e.touches[0].clientX;
     swipeStartY.current = e.touches[0].clientY;
     swipeDX.current = 0;
     swipeDY.current = 0;
     gestureModeRef.current = 'none';
-    setSwipeStyle({ transition: 'none' });
-    setPanelStyle({ transition: 'none', transform: 'translateY(0)', opacity: 1 });
   };
 
-  const onTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
-    if (swipeStartX.current == null || swipeStartY.current == null) return;
+  const onTouchMove = (e: React.TouchEvent) => {
+    if (ignoreSwipeRef.current) return;
+    if (e.touches.length !== 1) return;
 
-    const dxRaw = e.touches[0].clientX - swipeStartX.current;
-    const dyRaw = e.touches[0].clientY - swipeStartY.current;
+    const x = e.touches[0].clientX;
+    const y = e.touches[0].clientY;
+    const dx = x - swipeStartX.current;
+    const dy = y - swipeStartY.current;
+    swipeDX.current = dx;
+    swipeDY.current = dy;
 
-    swipeDX.current = dxRaw;
-    swipeDY.current = dyRaw;
+    const absX = Math.abs(dx);
+    const absY = Math.abs(dy);
 
-    const absX = Math.abs(dxRaw);
-    const absY = Math.abs(dyRaw);
-
+    // Decide intent once the finger moved a bit.
     if (gestureModeRef.current === 'none') {
-      // If it looks like a scroll, let the browser scroll (do NOT capture swipe).
-      if (absY >= V_INTENT_SLOP && absY > absX * 1.05) {
+      if (absX < 10 && absY < 10) return;
+      // Prefer vertical -> keep scrolling smooth.
+      if (absY > absX * 1.25) {
+        gestureModeRef.current = 'vertical';
         return;
       }
-
-      // Only start horizontal swipe if clearly horizontal AND moved enough.
-      if (absX >= H_INTENT_SLOP && absX > absY * INTENT_RATIO) {
+      if (absX > absY * 1.25) {
         gestureModeRef.current = 'horizontal';
       } else {
+        // ambiguous: treat as vertical to avoid blocking scroll
+        gestureModeRef.current = 'vertical';
         return;
       }
-
-      // Optional: allow vertical close on tablet when clearly vertical-down
-      if (isTabletOrBigger() && dyRaw > 0 && absY > absX * 1.2) {
-        gestureModeRef.current = 'vertical';
-      }
     }
 
-    if (gestureModeRef.current === 'vertical') {
-      const dy = clamp(Math.max(dyRaw, 0), 0, V_DRAG_CLAMP);
-      const opacity = Math.max(0.75, 1 - dy / 640);
-      setPanelStyle({ transform: `translateY(${dy}px)`, opacity, transition: 'none' });
-      setSwipeStyle({ transform: 'translateX(0)', transition: 'none' });
-      return;
-    }
-
+    // IMPORTANT: Do NOT transform while dragging (iOS can lose scroll momentum / get stuck).
+    // We only trigger a small snap/flash AFTER the swipe finishes (onTouchEnd).
     if (gestureModeRef.current === 'horizontal') {
-      const dx = clamp(dxRaw, -H_DRAG_CLAMP, H_DRAG_CLAMP);
-      setSwipeStyle({ transform: `translateX(${dx}px)`, transition: 'none' });
+      // prevent vertical scroll while the user is clearly swiping horizontally
+      // (React uses non-passive listeners for touch handlers, so this is allowed.)
+      e.preventDefault();
     }
   };
 
   const onTouchEnd = () => {
-    if (swipeStartX.current == null) return;
+    if (ignoreSwipeRef.current) {
+      ignoreSwipeRef.current = false;
+      gestureModeRef.current = 'none';
+      return;
+    }
 
     const dx = swipeDX.current;
     const dy = swipeDY.current;
 
-    swipeStartX.current = null;
-    swipeStartY.current = null;
+    if (gestureModeRef.current === 'horizontal') {
+      // Swipe LEFT -> next day, Swipe RIGHT -> previous day
+      if (Math.abs(dx) >= SWIPE_THRESHOLD && Math.abs(dx) > Math.abs(dy) * 1.1) {
+        animateShift(dx < 0 ? +1 : -1);
+
+      }
+    }
+
+    // reset
+    gestureModeRef.current = 'none';
     swipeDX.current = 0;
     swipeDY.current = 0;
-
-    if (gestureModeRef.current === 'vertical') {
-      if (isTabletOrBigger() && dy >= VERTICAL_CLOSE_THRESHOLD) {
-        animateCloseDown();
-      } else {
-        setPanelStyle({
-          transform: 'translateY(0)',
-          opacity: 1,
-          transition: `transform 160ms ${SNAP_EASE}, opacity 140ms ${SNAP_EASE}`,
-        });
-        setTimeout(() => setPanelStyle({}), 160);
-      }
-      gestureModeRef.current = 'none';
-      return;
-    }
-
-    if (gestureModeRef.current === 'horizontal') {
-      if (Math.abs(dx) >= SWIPE_THRESHOLD) {
-        animateShift(dx > 0 ? -1 : 1);
-      } else {
-        setSwipeStyle({ transform: 'translateX(0)', transition: `transform 170ms ${SNAP_EASE}` });
-      }
-      gestureModeRef.current = 'none';
-      return;
-    }
-
-    setSwipeStyle({ transform: 'translateX(0)', transition: `transform 160ms ${SNAP_EASE}` });
-    setPanelStyle({ transform: 'translateY(0)', opacity: 1, transition: `transform 160ms ${SNAP_EASE}, opacity 160ms ${SNAP_EASE}` });
-    setTimeout(() => setPanelStyle({}), 160);
   };
 
   // SAVE / DELETE (SAFE PATCH)
@@ -922,63 +810,6 @@ function BarberCalendarCore() {
     return store[selectedDayISO] || {};
   }, [store, selectedDayISO]);
 
-// ---------------------------------------------------------------------------
-// Day editor: iOS-style native horizontal pager (no manual dragging)
-//  - Horizontal swipe uses browser native scroll + scroll-snap (feels like iOS Calendar)
-//  - Vertical scroll inside each page stays smooth and never gets "stuck"
-// ---------------------------------------------------------------------------
-const pagerDays = useMemo(() => {
-  if (!selectedDate || !selectedDayISO) return null;
-
-  const prev = addDays(selectedDate, -1);
-  const next = addDays(selectedDate, +1);
-
-  const prevISO = toISODate(prev);
-  const nextISO = toISODate(next);
-
-  return [
-    { key: prevISO, date: prev, iso: prevISO, map: store[prevISO] || {} },
-    { key: selectedDayISO, date: selectedDate, iso: selectedDayISO, map: store[selectedDayISO] || {} },
-    { key: nextISO, date: next, iso: nextISO, map: store[nextISO] || {} },
-  ];
-}, [selectedDate, selectedDayISO, store]);
-
-const dayPagerRef = useRef<HTMLDivElement | null>(null);
-const dayPagerScrollEndRef = useRef<number | null>(null);
-
-const resetDayPagerToCenter = useCallback((behavior: ScrollBehavior = 'auto') => {
-  const el = dayPagerRef.current;
-  if (!el) return;
-  const w = el.clientWidth || 0;
-  if (!w) return;
-  el.scrollTo({ left: w, behavior });
-}, []);
-
-useEffect(() => {
-  if (!selectedDate) return;
-  // Keep current day in the middle page whenever the editor opens or the date changes.
-  requestAnimationFrame(() => resetDayPagerToCenter('auto'));
-}, [selectedDate, selectedDayISO, resetDayPagerToCenter]);
-
-const onDayPagerScroll = useCallback(() => {
-  const el = dayPagerRef.current;
-  if (!el) return;
-
-  if (dayPagerScrollEndRef.current) window.clearTimeout(dayPagerScrollEndRef.current);
-  dayPagerScrollEndRef.current = window.setTimeout(() => {
-    const w = el.clientWidth || 1;
-    const idx = Math.round(el.scrollLeft / w);
-
-    if (idx === 1) return; // center page
-
-    // idx 0 = previous day, idx 2 = next day
-    shiftSelectedDay(idx === 0 ? -1 : +1);
-
-    // Immediately snap back to center (no animation) after we switch the day.
-    requestAnimationFrame(() => resetDayPagerToCenter('auto'));
-  }, 80);
-}, [resetDayPagerToCenter, shiftSelectedDay]);
-
   useEffect(() => {
     if (!selectedDate) return;
     syncFromRemote();
@@ -1019,12 +850,6 @@ const onDayPagerScroll = useCallback(() => {
     }
     setSelectedDate(d);
   };
-
-  // Thin wrapper used by the iOS pager day-editor (keeps the JSX simple)
-  const updateSlot = (dayISO: string, time: string, value: string) => {
-    void saveName(dayISO, time, value);
-  };
-
 
   // Closest available (today -> future)
   type AvailHit = { dayISO: string; time: string };
@@ -1707,51 +1532,53 @@ const onDayPagerScroll = useCallback(() => {
               </div>
 
               {/* Slots */}
-              {/* Slots (native horizontal pager) */}
-<div
-  ref={dayPagerRef}
-  className="mt-4 flex-1 overflow-x-auto flex snap-x snap-mandatory"
-  style={{
-    scrollSnapType: 'x mandatory',
-    WebkitOverflowScrolling: 'touch',
-    overscrollBehaviorX: 'contain',
-    touchAction: 'pan-x',
-  }}
-  onScroll={onDayPagerScroll}
->
-  {(pagerDays || []).map((p) => (
-    <div key={p.key} className="shrink-0 w-full snap-center">
-      <div
-        className="h-full overflow-y-auto"
-        style={{
-          WebkitOverflowScrolling: 'touch',
-          overscrollBehaviorY: 'contain',
-          touchAction: 'pan-y',
-          paddingBottom: keyboardInset ? `${keyboardInset}px` : undefined,
-        }}
-      >
-        <div className="grid gap-2">
-          {DAY_SLOTS.map((t) => (
-            <SlotRowLite
-              key={t}
-              time={t}
-              value={p.map[t] || ''}
-              onChange={(v) => updateSlot(p.iso, t, v)}
-              suggestions={suggestions}
-            />
-          ))}
-        </div>
+              <div
+                className="mt-4 flex-1 overflow-y-auto md:overflow-visible"
+                onTouchStart={onTouchStart}
+                onTouchMove={onTouchMove}
+                onTouchEnd={onTouchEnd}
+                onTouchCancel={onTouchEnd}
+                style={{
+                  ...swipeStyle,
+                  touchAction: 'pan-y',
+                  paddingBottom: keyboardInset ? `${keyboardInset}px` : undefined,
+                }}
+              >
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5" style={{ gridAutoRows: 'minmax(32px,1fr)' }}>
+                  {DAY_SLOTS.map((time) => {
+                    const value = (selectedDayMap as Record<string, string>)[time] || '';
+                    const isSaved = !!(savedPulse && savedPulse.day === selectedDayISO && savedPulse.time === time);
+                    const timeKey = `${selectedDayISO}_${time}`;
+                    const isArmed = armedRemove === timeKey;
+                    const isHighlighted = !!highlight && highlight.day === selectedDayISO && highlight.time === time;
 
-        {!remoteReady && (
-          <div className="mt-3 text-xs text-neutral-400">
-            Offline mode (will sync when online)
-          </div>
-        )}
-      </div>
-    </div>
-  ))}
-</div>
+                    return (
+                      <SlotRow
+                        key={timeKey}
+                        dayISO={selectedDayISO}
+                        time={time}
+                        value={value}
+                        isSaved={isSaved}
+                        isArmed={isArmed}
+                        isHighlighted={isHighlighted}
+                        canWrite={remoteReady}
+                        onStartEditing={startEditing}
+                        onStopEditing={stopEditing}
+                        onSave={saveName}
+                        onArm={armRemove}
+                        onConfirmRemove={confirmRemove}
+                        onRevealFocus={revealFocus}
+                      />
+                    );
+                  })}
+                </div>
 
+                {!remoteReady && (
+                  <div className="mt-3 text-xs text-neutral-500 text-center" style={{ fontFamily: BRAND.fontBody }}>
+                    Зареждане от сървъра… (записът е заключен)
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </div>
