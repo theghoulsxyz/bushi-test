@@ -561,27 +561,35 @@ function BarberCalendarCore() {
 
   const [savedPulse, setSavedPulse] = useState<{ day: string; time: string; ts: number } | null>(null);
 
-  // Day switcher strip (iPhone-like feel): native horizontal paging, no fighting with vertical scroll.
-  const [swipeStyle, setSwipeStyle] = useState<React.CSSProperties>({});
-  const [panelStyle, setPanelStyle] = useState<React.CSSProperties>({});
+  // Day pager (iPhone-like: native horizontal paging + native vertical scroll)
+  const dayPagerRef = useRef<HTMLDivElement | null>(null);
+  const dayPagerSettleTimer = useRef<number | null>(null);
 
   const SNAP_EASE = 'cubic-bezier(0.25, 0.9, 0.25, 1)';
 
-  const dayPagerRef = useRef<HTMLDivElement | null>(null);
-  const dayPagerLockRef = useRef(false);
-  const dayPagerSettleTimer = useRef<number | null>(null);
-
-  const centerDayPager = useCallback(() => {
+  const recenterDayPager = useCallback(() => {
     const el = dayPagerRef.current;
     if (!el) return;
-    el.scrollLeft = el.clientWidth; // center page
+    // We keep the current day in the middle page (index 1).
+    el.scrollTo({ left: el.clientWidth, behavior: 'auto' });
   }, []);
-useEffect(() => {
-    setSwipeStyle({});
+
+  useEffect(() => {
     setPanelStyle({});
     setArmedRemove(null);
     clearArmedTimeout();
-  }, [selectedDate, clearArmedTimeout]);
+
+    if (!selectedDate) return;
+    // After opening (or changing day), ensure the pager is centered.
+    requestAnimationFrame(() => recenterDayPager());
+  }, [selectedDate, clearArmedTimeout, recenterDayPager]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const onResize = () => recenterDayPager();
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, [recenterDayPager]);
 
   useEffect(() => () => clearArmedTimeout(), [clearArmedTimeout]);
 
@@ -597,78 +605,6 @@ useEffect(() => {
     });
   };
 
-  const animateShift = (delta: number) => {
-    setSwipeStyle({
-      transform: `translateX(${delta > 0 ? -22 : 22}px)`,
-      opacity: 0.55,
-      transition: `transform 140ms ${SNAP_EASE}, opacity 140ms ${SNAP_EASE}`,
-    });
-    setTimeout(() => {
-      shiftSelectedDay(delta);
-      setSwipeStyle({
-        transform: `translateX(${delta > 0 ? 22 : -22}px)`,
-        opacity: 0.55,
-        transition: 'none',
-      });
-      requestAnimationFrame(() => {
-        setSwipeStyle({
-          transform: 'translateX(0)',
-          opacity: 1,
-          transition: `transform 160ms ${SNAP_EASE}, opacity 160ms ${SNAP_EASE}`,
-        });
-      });
-    }, 140);
-  };
-
-  // iPhone-like day swipe strip behavior (native horizontal paging).
-  useEffect(() => {
-    if (!selectedDate) return;
-    const t = window.setTimeout(() => centerDayPager(), 0);
-    return () => window.clearTimeout(t);
-  }, [selectedDate, centerDayPager]);
-
-  useEffect(() => {
-    const onResize = () => centerDayPager();
-    window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
-  }, [centerDayPager]);
-
-  useEffect(() => {
-    return () => {
-      if (dayPagerSettleTimer.current != null) window.clearTimeout(dayPagerSettleTimer.current);
-    };
-  }, []);
-
-  const onDayPagerScroll = useCallback(() => {
-    const el = dayPagerRef.current;
-    if (!el || dayPagerLockRef.current || !selectedDate) return;
-
-    if (dayPagerSettleTimer.current != null) window.clearTimeout(dayPagerSettleTimer.current);
-
-    dayPagerSettleTimer.current = window.setTimeout(() => {
-      const el2 = dayPagerRef.current;
-      if (!el2 || dayPagerLockRef.current || !selectedDate) return;
-
-      const w = el2.clientWidth || 1;
-      const page = Math.round(el2.scrollLeft / w); // 0=prev, 1=center, 2=next
-
-      if (page === 0) {
-        dayPagerLockRef.current = true;
-        animateShift(-1);
-      } else if (page === 2) {
-        dayPagerLockRef.current = true;
-        animateShift(1);
-      }
-
-      requestAnimationFrame(() => centerDayPager());
-
-      window.setTimeout(() => {
-        dayPagerLockRef.current = false;
-      }, 240);
-    }, 90);
-  }, [animateShift, selectedDate, centerDayPager]);
-
-
   const animateCloseDown = () => {
     setPanelStyle({
       transform: 'translateY(160px)',
@@ -678,12 +614,108 @@ useEffect(() => {
     setTimeout(() => {
       setSelectedDate(null);
       setPanelStyle({});
-      setSwipeStyle({});
-        setPendingFocus(null);
+      if (dayPagerSettleTimer.current != null) {
+        window.clearTimeout(dayPagerSettleTimer.current);
+        dayPagerSettleTimer.current = null;
+      }
+      setPendingFocus(null);
     }, 170);
   };
 
-  
+  const onDayPagerScroll = useCallback(() => {
+    const el = dayPagerRef.current;
+    if (!el || !selectedDate) return;
+
+    if (dayPagerSettleTimer.current != null) {
+      window.clearTimeout(dayPagerSettleTimer.current);
+      dayPagerSettleTimer.current = null;
+    }
+
+    dayPagerSettleTimer.current = window.setTimeout(() => {
+      const w = el.clientWidth || 1;
+      const page = Math.round(el.scrollLeft / w);
+
+      // page: 0 = previous day, 1 = current day, 2 = next day
+      if (page === 0) {
+        shiftSelectedDay(-1);
+      } else if (page === 2) {
+        shiftSelectedDay(1);
+      } else {
+        // Keep perfectly centered if the snap lands slightly off.
+        if (Math.abs(el.scrollLeft - w) > 1) recenterDayPager();
+      }
+    }, 90);
+  }, [selectedDate, shiftSelectedDay, recenterDayPager]);
+
+  const renderDayEditorPage = (date: Date) => {
+    const dayISO = toISODate(date);
+    const dayMap = (store[dayISO] || {}) as Record<string, string>;
+
+    return (
+      <div className="flex h-full flex-col">
+        <div
+          className="flex-1 overflow-y-auto md:overflow-visible"
+          style={{
+            WebkitOverflowScrolling: 'touch',
+            overscrollBehavior: 'contain',
+            paddingBottom: keyboardInset ? `${keyboardInset}px` : undefined,
+          }}
+        >
+          <div className="sticky top-0 z-10 pb-4 bg-neutral-950/90 backdrop-blur">
+            <div className="flex items-center justify-between select-none">
+              <h3 className="text-2xl md:text-3xl font-bold" style={{ fontFamily: BRAND.fontTitle }}>
+                {WEEKDAYS_FULL[(date.getDay() + 6) % 7]}, {date.getDate()} {MONTHS[date.getMonth()]} {date.getFullYear()}
+              </h3>
+              <button
+                type="button"
+                className="w-10 md:w-12 h-10 md:h-12 rounded-xl border border-neutral-700/70 bg-neutral-900/60 hover:bg-neutral-800/70 active:scale-[0.98] transition"
+                onMouseDown={(e) => e.stopPropagation()}
+                onClick={(e) => { e.stopPropagation(); animateCloseDown(); }}
+                aria-label="Close"
+                title="Close"
+              >
+                <span className="text-lg md:text-xl">✕</span>
+              </button>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5" style={{ gridAutoRows: 'minmax(32px,1fr)' }}>
+            {DAY_SLOTS.map((time) => {
+              const value = dayMap[time] || '';
+              const isSaved = !!(savedPulse && savedPulse.day === dayISO && savedPulse.time === time);
+              const timeKey = `${dayISO}_${time}`;
+              const isArmed = armedRemove === timeKey;
+              const isHighlighted = !!highlight && highlight.day === dayISO && highlight.time === time;
+
+              return (
+                <SlotRow
+                  key={timeKey}
+                  dayISO={dayISO}
+                  time={time}
+                  value={value}
+                  isSaved={isSaved}
+                  isArmed={isArmed}
+                  isHighlighted={isHighlighted}
+                  pendingFocus={pendingFocus}
+                  setPendingFocus={setPendingFocus}
+                  onSave={saveName}
+                  onArm={armRemove}
+                  onConfirmRemove={confirmRemove}
+                  onRevealFocus={revealFocus}
+                />
+              );
+            })}
+          </div>
+
+          {!remoteReady && (
+            <div className="mt-3 text-xs text-neutral-500 text-center" style={{ fontFamily: BRAND.fontBody }}>
+              Зареждане от сървъра… (записът е заключен)
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
 
   // SAVE / DELETE (SAFE PATCH)
   const saveName = useCallback(
@@ -744,10 +776,6 @@ useEffect(() => {
 
   const selectedDayISO = useMemo(() => (selectedDate ? toISODate(selectedDate) : null), [selectedDate]);
 
-  const selectedDayMap = useMemo(() => {
-    if (!selectedDayISO) return {};
-    return store[selectedDayISO] || {};
-  }, [store, selectedDayISO]);
 
   useEffect(() => {
     if (!selectedDate) return;
@@ -1457,118 +1485,29 @@ useEffect(() => {
             onTouchStart={(e) => e.stopPropagation()}
           >
             <div className="flex h-full flex-col">
-              {/* Header: tap to close */}
+              {/* iPhone-like Day Pager (native horizontal paging + native vertical scroll) */}
               <div
-                className="flex items-center justify-between cursor-pointer"
-                onClick={(e) => { e.stopPropagation(); animateCloseDown(); }}
-                title="Tap to close"
-              >
-                <h3 className="text-2xl md:text-3xl font-bold" style={{ fontFamily: BRAND.fontTitle }}>
-                  {WEEKDAYS_FULL[(selectedDate.getDay() + 6) % 7]} {selectedDate.getDate()} {MONTHS[selectedDate.getMonth()]} {selectedDate.getFullYear()}
-                </h3>
-                <div className="w-10 md:w-12" />
-
-              {/* iPhone-like day swipe strip */}
-              <div className="mt-2">
-                <div
-                  ref={dayPagerRef}
-                  onScroll={onDayPagerScroll}
-                  className="bushi-daypager -mx-1 flex overflow-x-auto"
-                  style={{
-                    scrollSnapType: 'x mandatory',
-                    WebkitOverflowScrolling: 'touch',
-                                        touchAction: 'pan-x',
-                  }}
-                >
-                  <div className="flex-none w-full px-1" style={{ scrollSnapAlign: 'start',  }}>
-                    <button
-                      type="button"
-                      className="w-full h-9 rounded-xl border border-neutral-700/60 bg-neutral-900/40 hover:bg-neutral-900/55 active:bg-neutral-900/70 text-sm md:text-base flex items-center justify-center opacity-70"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        animateShift(-1);
-                        requestAnimationFrame(() => centerDayPager());
-                      }}
-                    >
-                      ← Previous day
-                    </button>
-                  </div>
-
-                  <div className="flex-none w-full px-1" style={{ scrollSnapAlign: 'start',  }}>
-                    <div className="w-full h-9 rounded-xl border border-neutral-700/60 bg-neutral-900/60 text-sm md:text-base flex items-center justify-center">
-                      Swipe to change day ↔
-                    </div>
-                  </div>
-
-                  <div className="flex-none w-full px-1" style={{ scrollSnapAlign: 'start',  }}>
-                    <button
-                      type="button"
-                      className="w-full h-9 rounded-xl border border-neutral-700/60 bg-neutral-900/40 hover:bg-neutral-900/55 active:bg-neutral-900/70 text-sm md:text-base flex items-center justify-center opacity-70"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        animateShift(1);
-                        requestAnimationFrame(() => centerDayPager());
-                      }}
-                    >
-                      Next day →
-                    </button>
-                  </div>
-                </div>
-
-                <style jsx>{`
-                  .bushi-daypager::-webkit-scrollbar {
-                    display: none;
-                  }
-                `}</style>
-              </div>
-
-              </div>
-
-              {/* Slots */}
-              <div
-                className="mt-4 flex-1 overflow-y-auto md:overflow-visible"
+                ref={dayPagerRef}
+                className="flex-1 overflow-x-auto overflow-y-hidden"
+                onScroll={onDayPagerScroll}
                 style={{
-                  ...swipeStyle,
-                  touchAction: 'pan-y',
+                  scrollSnapType: 'x mandatory',
                   WebkitOverflowScrolling: 'touch',
                   overscrollBehavior: 'contain',
-                  paddingBottom: keyboardInset ? `${keyboardInset}px` : undefined,
+                  touchAction: 'pan-x pan-y',
                 }}
               >
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5" style={{ gridAutoRows: 'minmax(32px,1fr)' }}>
-                  {DAY_SLOTS.map((time) => {
-                    const value = (selectedDayMap as Record<string, string>)[time] || '';
-                    const isSaved = !!(savedPulse && savedPulse.day === selectedDayISO && savedPulse.time === time);
-                    const timeKey = `${selectedDayISO}_${time}`;
-                    const isArmed = armedRemove === timeKey;
-                    const isHighlighted = !!highlight && highlight.day === selectedDayISO && highlight.time === time;
-
+                <div className="flex h-full">
+                  {([-1, 0, 1] as const).map((delta) => {
+                    const d = addDays(selectedDate, delta);
+                    const iso = toISODate(d);
                     return (
-                      <SlotRow
-                        key={timeKey}
-                        dayISO={selectedDayISO}
-                        time={time}
-                        value={value}
-                        isSaved={isSaved}
-                        isArmed={isArmed}
-                        isHighlighted={isHighlighted}
-                        canWrite={remoteReady}
-                        onStartEditing={startEditing}
-                        onStopEditing={stopEditing}
-                        onSave={saveName}
-                        onArm={armRemove}
-                        onConfirmRemove={confirmRemove}
-                        onRevealFocus={revealFocus}
-                      />
+                      <div key={iso} className="w-full flex-none h-full" style={{ scrollSnapAlign: 'center' }}>
+                        {renderDayEditorPage(d)}
+                      </div>
                     );
                   })}
                 </div>
-
-                {!remoteReady && (
-                  <div className="mt-3 text-xs text-neutral-500 text-center" style={{ fontFamily: BRAND.fontBody }}>
-                    Зареждане от сървъра… (записът е заключен)
-                  </div>
-                )}
               </div>
             </div>
           </div>
