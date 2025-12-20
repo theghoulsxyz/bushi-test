@@ -612,14 +612,26 @@ function BarberCalendarCore() {
   };
 
   const animateShift = (delta: number) => {
-    // Small opacity flash only (no transforms -> iOS scrolling stays stable)
-    setSwipeStyle({ opacity: 0.72, transition: `opacity 120ms ${SNAP_EASE}` });
-
+    setSwipeStyle({
+      transform: `translateX(${delta > 0 ? -22 : 22}px)`,
+      opacity: 0.55,
+      transition: `transform 140ms ${SNAP_EASE}, opacity 140ms ${SNAP_EASE}`,
+    });
     setTimeout(() => {
       shiftSelectedDay(delta);
-      setSwipeStyle({ opacity: 1, transition: `opacity 160ms ${SNAP_EASE}` });
-      setTimeout(() => setSwipeStyle({}), 220);
-    }, 120);
+      setSwipeStyle({
+        transform: `translateX(${delta > 0 ? 22 : -22}px)`,
+        opacity: 0.55,
+        transition: 'none',
+      });
+      requestAnimationFrame(() => {
+        setSwipeStyle({
+          transform: 'translateX(0)',
+          opacity: 1,
+          transition: `transform 160ms ${SNAP_EASE}, opacity 160ms ${SNAP_EASE}`,
+        });
+      });
+    }, 140);
   };
 
   const animateCloseDown = () => {
@@ -638,124 +650,99 @@ function BarberCalendarCore() {
   };
 
   const onTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
-    // If the touch starts on an input/button, don't treat it as a swipe (prevents "dragging" inputs).
-    // This keeps editing + vertical scrolling feeling native.
-    const target = e.target as HTMLElement | null;
-    if (target && target.closest('input, textarea, select, button, a')) {
-      gestureModeRef.current = 'none';
-      swipeStartX.current = null;
-      swipeStartY.current = null;
-      swipeDX.current = 0;
-      swipeDY.current = 0;
-      return;
-    }
-
     swipeStartX.current = e.touches[0].clientX;
     swipeStartY.current = e.touches[0].clientY;
     swipeDX.current = 0;
     swipeDY.current = 0;
     gestureModeRef.current = 'none';
-
-    // Keep close-down drag immediate while finger is down
+    setSwipeStyle({ transition: 'none' });
     setPanelStyle({ transition: 'none', transform: 'translateY(0)', opacity: 1 });
   };
 
   const onTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
-    const startX = swipeStartX.current;
-    const startY = swipeStartY.current;
-    if (startX == null || startY == null) return;
+    if (swipeStartX.current == null || swipeStartY.current == null) return;
 
-    const x = e.touches[0].clientX;
-    const y = e.touches[0].clientY;
+    const dxRaw = e.touches[0].clientX - swipeStartX.current;
+    const dyRaw = e.touches[0].clientY - swipeStartY.current;
 
-    const dx = x - startX;
-    const dy = y - startY;
+    swipeDX.current = dxRaw;
+    swipeDY.current = dyRaw;
 
-    swipeDX.current = dx;
-    swipeDY.current = dy;
-
-    const absX = Math.abs(dx);
-    const absY = Math.abs(dy);
+    const absX = Math.abs(dxRaw);
+    const absY = Math.abs(dyRaw);
 
     if (gestureModeRef.current === 'none') {
-      // Let vertical scrolling win unless it's *clearly* a horizontal swipe.
-      if (absY >= V_INTENT_SLOP && absY > absX * 1.05) return;
+      // If it looks like a scroll, let the browser scroll (do NOT capture swipe).
+      if (absY >= V_INTENT_SLOP && absY > absX * 1.05) {
+        return;
+      }
 
-      // Horizontal swipe: requires a clear horizontal intent.
+      // Only start horizontal swipe if clearly horizontal AND moved enough.
       if (absX >= H_INTENT_SLOP && absX > absY * INTENT_RATIO) {
         gestureModeRef.current = 'horizontal';
-      } else if (
-        isTabletOrBigger() &&
-        dy > 0 &&
-        absY >= V_INTENT_SLOP &&
-        absY > absX * 1.2
-      ) {
-        // Tablet: allow a gentle pull-down to close.
-        gestureModeRef.current = 'vertical';
       } else {
         return;
+      }
+
+      // Optional: allow vertical close on tablet when clearly vertical-down
+      if (isTabletOrBigger() && dyRaw > 0 && absY > absX * 1.2) {
+        gestureModeRef.current = 'vertical';
       }
     }
 
     if (gestureModeRef.current === 'vertical') {
-      const dyy = clamp(Math.max(dy, 0), 0, V_DRAG_CLAMP);
-      const opacity = Math.max(0.75, 1 - dyy / 640);
-      setPanelStyle({ transform: `translateY(${dyy}px)`, opacity, transition: 'none' });
+      const dy = clamp(Math.max(dyRaw, 0), 0, V_DRAG_CLAMP);
+      const opacity = Math.max(0.75, 1 - dy / 640);
+      setPanelStyle({ transform: `translateY(${dy}px)`, opacity, transition: 'none' });
+      setSwipeStyle({ transform: 'translateX(0)', transition: 'none' });
       return;
     }
 
-    // Horizontal: we only *detect* the swipe while finger is down.
-    // No transforms here (transforming a momentum scroll container can break iOS scrolling).
+    if (gestureModeRef.current === 'horizontal') {
+      const dx = clamp(dxRaw, -H_DRAG_CLAMP, H_DRAG_CLAMP);
+      setSwipeStyle({ transform: `translateX(${dx}px)`, transition: 'none' });
+    }
   };
 
-  const resetGesture = () => {
+  const onTouchEnd = () => {
+    if (swipeStartX.current == null) return;
+
+    const dx = swipeDX.current;
+    const dy = swipeDY.current;
+
     swipeStartX.current = null;
     swipeStartY.current = null;
     swipeDX.current = 0;
     swipeDY.current = 0;
-    gestureModeRef.current = 'none';
-  };
 
-  const onTouchEnd = () => {
-    const dx = swipeDX.current;
-    const dy = swipeDY.current;
-    const mode = gestureModeRef.current;
-
-    resetGesture();
-
-    if (mode === 'vertical') {
-      if (dy > V_CLOSE_THRESHOLD_PX) {
+    if (gestureModeRef.current === 'vertical') {
+      if (isTabletOrBigger() && dy >= VERTICAL_CLOSE_THRESHOLD) {
         animateCloseDown();
       } else {
         setPanelStyle({
           transform: 'translateY(0)',
           opacity: 1,
-          transition: `transform 200ms ${SNAP_EASE}, opacity 200ms ${SNAP_EASE}`,
+          transition: `transform 160ms ${SNAP_EASE}, opacity 140ms ${SNAP_EASE}`,
         });
-        setTimeout(() => setPanelStyle({}), 220);
+        setTimeout(() => setPanelStyle({}), 160);
       }
+      gestureModeRef.current = 'none';
       return;
     }
 
-    if (mode === 'horizontal') {
-      if (Math.abs(dx) >= SWIPE_THRESHOLD_PX && Math.abs(dx) > Math.abs(dy) * 1.05) {
-        animateShift(dx > 0 ? -1 : +1);
+    if (gestureModeRef.current === 'horizontal') {
+      if (Math.abs(dx) >= SWIPE_THRESHOLD) {
+        animateShift(dx > 0 ? -1 : 1);
       } else {
-        // ensure any previous flash is cleared
-        setSwipeStyle({});
+        setSwipeStyle({ transform: 'translateX(0)', transition: `transform 170ms ${SNAP_EASE}` });
       }
+      gestureModeRef.current = 'none';
+      return;
     }
-  };
 
-  const onTouchCancel = () => {
-    resetGesture();
-    setSwipeStyle({});
-    setPanelStyle({
-      transform: 'translateY(0)',
-      opacity: 1,
-      transition: `transform 200ms ${SNAP_EASE}, opacity 200ms ${SNAP_EASE}`,
-    });
-    setTimeout(() => setPanelStyle({}), 220);
+    setSwipeStyle({ transform: 'translateX(0)', transition: `transform 160ms ${SNAP_EASE}` });
+    setPanelStyle({ transform: 'translateY(0)', opacity: 1, transition: `transform 160ms ${SNAP_EASE}, opacity 160ms ${SNAP_EASE}` });
+    setTimeout(() => setPanelStyle({}), 160);
   };
 
   // SAVE / DELETE (SAFE PATCH)
@@ -1549,7 +1536,7 @@ function BarberCalendarCore() {
                 onTouchStart={onTouchStart}
                 onTouchMove={onTouchMove}
                 onTouchEnd={onTouchEnd}
-                onTouchCancel={onTouchCancel}
+                onTouchCancel={onTouchEnd}
                 style={{
                   ...swipeStyle,
                   touchAction: 'pan-y',
