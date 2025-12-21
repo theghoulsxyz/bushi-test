@@ -1,7 +1,8 @@
 'use client';
 // Bushi Admin — Month grid + Day editor (Native Scroll Snap Fix)
 // FIX V6: Extracted DayColumn to a Memoized Component to fix "White Screen" crash.
-// FIX V7: Added translateZ(0) to DayColumn to fix iOS "cut off" rendering bug.
+// FIX V7: Added translateZ(0) to fix iOS "cut off" rendering bug.
+// FIX V8: Removed 'touch-action: pan-y' to restore Horizontal Swipe (Left/Right) between days.
 
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
@@ -347,8 +348,9 @@ const SlotRow = React.memo(
     prev.canWrite === next.canWrite
 );
 
-// FIX V6: Extracted DayColumn Component to prevent DOM thrashing
-// FIX V7: Added iOS render fix
+// FIX V6: Extracted DayColumn Component
+// FIX V7: Added translateZ(0) to fix iOS "cut off" bug
+// FIX V8: Removed 'touch-action: pan-y' to restore Swipe
 const DayColumn = React.memo(({ 
     date, 
     isCurrent, 
@@ -392,7 +394,7 @@ const DayColumn = React.memo(({
                 // FIX FOR IPHONE CLIPPING: Force GPU layer
                 transform: 'translateZ(0)',
                 backfaceVisibility: 'hidden',
-                touchAction: 'pan-y'
+                // Removed 'touchAction: pan-y' here so you can swipe days horizontally again!
             }}
         >
             <div className="w-full relative min-h-full">
