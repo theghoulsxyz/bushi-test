@@ -268,13 +268,13 @@ const SlotRow = React.memo(
         style={isHighlighted ? { animation: 'bushiPulse 220ms ease-in-out infinite alternate' } : undefined}
       >
         <div
-          className="text-[1.05rem] md:text-[1.15rem] font-semibold tabular-nums min-w-[4.9rem] text-center select-none"
+          className="text-[1.02rem] md:text-[1.15rem] font-semibold tabular-nums min-w-[4.4rem] sm:min-w-[4.9rem] text-center select-none"
           style={{ fontFamily: BRAND.fontBody }}
         >
           {time}
         </div>
 
-        <div className="flex-1 min-w-0 flex items-center gap-2">
+        <div className="flex-1 min-w-0 flex items-center justify-center gap-2">
           <input
             id={inputId}
             key={timeKey + value}
@@ -305,7 +305,7 @@ const SlotRow = React.memo(
               el.dataset.orig = el.value;
               onSave(dayISO, time, el.value);
             }}
-            className="block w-full text-white bg-[rgb(10,10,10)] border border-neutral-700/70 focus:border-white/70 focus:outline-none focus:ring-0 rounded-lg px-3 py-1.5 text-center transition-all duration-200"
+            className="block w-full max-w-[520px] text-white bg-[rgb(10,10,10)] border border-neutral-700/70 focus:border-white/70 focus:outline-none focus:ring-0 rounded-lg px-3 py-1.5 text-center transition-all duration-200"
             style={{ fontFamily: BRAND.fontBody }}
           />
 
@@ -387,17 +387,15 @@ const DayColumn = React.memo(({
         <div
             id={isCurrent ? 'bushi-day-content' : undefined}
             ref={dayContentRef}
-            className="w-full h-full min-h-0 overflow-y-auto"
+            className="w-full h-full flex-shrink-0 snap-center overflow-y-auto px-[max(10px,env(safe-area-inset-left))] pr-[max(10px,env(safe-area-inset-right))]"
             style={{
                 WebkitOverflowScrolling: 'touch',
                 overscrollBehaviorY: 'contain' as any,
                 overflowAnchor: 'none' as any,
                 paddingBottom: `${bottomPad}px`,
-                // iOS Safari can "stop painting" long overflow lists when the scroll container
-                // (or its ancestors) are promoted to their own compositing layer.
-                // Use containment/isolation instead of transform on the scroll container.
-                contain: 'layout paint' as any,
-                isolation: 'isolate' as any,
+                // OUTER LAYER PROMOTION
+                transform: 'translateZ(0)',
+                backfaceVisibility: 'hidden',
             }}
         >
             <div 
@@ -410,7 +408,7 @@ const DayColumn = React.memo(({
                 }}
             >
                 <div
-                    className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 px-0.5"
+                    className="mx-auto w-full max-w-[980px] grid grid-cols-1 sm:grid-cols-2 gap-2.5 px-2 sm:px-3"
                     style={{ gridAutoRows: 'min-content' }}
                 >
                     {DAY_SLOTS.map((time) => {
@@ -1203,7 +1201,7 @@ function BarberCalendarCore() {
 
   return (
     <div
-      className="fixed inset-0 w-full h-[100dvh] bg-black text-white overflow-hidden"
+      className="fixed inset-0 w-full h-dvh bg-black text-white overflow-hidden"
       onClickCapture={(e) => {
         if (!swallowNextClickRef.current) return;
         e.preventDefault();
@@ -1212,11 +1210,11 @@ function BarberCalendarCore() {
     >
       <div className="max-w-screen-2xl mx-auto px-[clamp(12px,2.5vw,40px)] pt-[clamp(12px,2.5vw,40px)] pb-[clamp(8px,2vw,24px)] h-full flex flex-col select-none">
         
-        <div className="flex flex-col md:flex-row items-center justify-center md:justify-between gap-2 md:gap-6">
+        <div className="flex flex-col md:flex-row items-center justify-center md:justify-between gap-1 md:gap-6">
           <img
             src={BRAND.logoLight}
             alt="logo"
-            className="w-auto h-[clamp(72px,10vh,140px)] sm:h-[clamp(80px,10vh,160px)] md:h-[clamp(120px,14vh,220px)] object-contain cursor-pointer"
+            className="w-64 h-auto md:w-auto md:h-[22rem] object-contain cursor-pointer"
             onClick={() => {
               const now = new Date();
               setViewYear(now.getFullYear());
