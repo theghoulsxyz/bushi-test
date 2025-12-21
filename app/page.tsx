@@ -682,6 +682,36 @@ function BarberCalendarCore() {
   const SNAP_EASE = 'cubic-bezier(0.25, 0.9, 0.25, 1)';
   const [panelStyle, setPanelStyle] = useState<React.CSSProperties>({});
 
+  // iOS-only day swipe track (translateX). We keep the old scroll-snap for Android/desktop.
+  const dayHostRefIOS = useRef<HTMLDivElement>(null);
+  const dayWRefIOS = useRef<number>(0);
+  const [dayTrackStyleIOS, setDayTrackStyleIOS] = useState<React.CSSProperties>({ transform: 'translate3d(-100%,0,0)' });
+
+  const iosSwipeRef = useRef({
+    active: false,
+    mode: 'none' as 'none' | 'horizontal',
+    startX: 0,
+    startY: 0,
+    dx: 0,
+    dy: 0,
+    pointerId: -1,
+  });
+
+  const measureIOSDayWidth = useCallback(() => {
+    const host = dayHostRefIOS.current;
+    const w = host?.offsetWidth || 0;
+    if (w) dayWRefIOS.current = w;
+    return w;
+  }, []);
+
+  const resetIOSTrack = useCallback(() => {
+    const w = measureIOSDayWidth();
+    if (!w) return;
+    setDayTrackStyleIOS({ transform: `translate3d(${-w}px,0,0)`, transition: 'none' });
+  }, [measureIOSDayWidth]);
+
+
+
   // iOS Safari compositor workaround: long nested overflow lists can "stop painting"
   // when momentum scrolling + scroll-snap are involved. Disabling momentum scrolling
   // for the slot list (and the day swipe strip) on iOS is the most reliable fix.
@@ -707,6 +737,109 @@ function BarberCalendarCore() {
       (target as any).offsetHeight;
     });
   }, []);
+
+// iOS-only pointer swipe handlers (translate track). This avoids WebKit "partial paint" bugs.
+  const IOS_SWIPE_THRESHOLD = 70;
+  const IOS_SWIPE_CLAMP = 260;
+
+  const commitIOSSwipe = useCallback(
+    (delta: number) => {
+      const w = dayWRefIOS.current || measureIOSDayWidth();
+      if (!w) return;
+
+      // Animate to prev(0) or next(-2w)
+      const targetX = delta > 0 ? -2 * w : 0;
+      setDayTrackStyleIOS({ transform: `translate3d(${targetX}px,0,0)`, transition: `transform 170ms ${SNAP_EASE}` });
+
+      window.setTimeout(() => {
+        shiftSelectedDay(delta);
+        requestAnimationFrame(() => {
+          const w2 = dayWRefIOS.current || measureIOSDayWidth() || w;
+          dayWRefIOS.current = w2;
+          // Reset instantly to center
+          setDayTrackStyleIOS({ transform: `translate3d(${-w2}px,0,0)`, transition: 'none' });
+        });
+      }, 170);
+    },
+    [measureIOSDayWidth, viewMonth, viewYear],
+  );
+
+  const onIOSPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!IS_IOS) return;
+    if (isShiftingRef.current) return;
+    if (isTypingTarget(e.target as any)) return;
+
+    iosSwipeRef.current.active = true;
+    iosSwipeRef.current.mode = 'none';
+    iosSwipeRef.current.startX = e.clientX;
+    iosSwipeRef.current.startY = e.clientY;
+    iosSwipeRef.current.dx = 0;
+    iosSwipeRef.current.dy = 0;
+    iosSwipeRef.current.pointerId = e.pointerId;
+
+    try {
+      (e.currentTarget as any).setPointerCapture?.(e.pointerId);
+    } catch {}
+
+    // Ensure we start from center with no transition
+    resetIOSTrack();
+  };
+
+  const onIOSPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!IS_IOS) return;
+    if (!iosSwipeRef.current.active) return;
+    if (iosSwipeRef.current.pointerId !== e.pointerId) return;
+    if (isShiftingRef.current) return;
+
+    const dx = e.clientX - iosSwipeRef.current.startX;
+    const dy = e.clientY - iosSwipeRef.current.startY;
+    iosSwipeRef.current.dx = dx;
+    iosSwipeRef.current.dy = dy;
+
+    if (iosSwipeRef.current.mode === 'none') {
+      if (Math.abs(dx) > 12 && Math.abs(dx) > Math.abs(dy) * 1.15) {
+        iosSwipeRef.current.mode = 'horizontal';
+      } else {
+        return; // let vertical scroll happen
+      }
+    }
+
+    if (iosSwipeRef.current.mode === 'horizontal') {
+      const w = dayWRefIOS.current || measureIOSDayWidth();
+      if (!w) return;
+
+      const clampPx = Math.min(IOS_SWIPE_CLAMP, Math.round(w * 0.45));
+      const clamped = clamp(dx, -clampPx, clampPx);
+
+      setDayTrackStyleIOS({ transform: `translate3d(${-w + clamped}px,0,0)`, transition: 'none' });
+    }
+  };
+
+  const onIOSPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!IS_IOS) return;
+    if (!iosSwipeRef.current.active) return;
+    if (iosSwipeRef.current.pointerId !== e.pointerId) return;
+
+    const dx = iosSwipeRef.current.dx;
+    const mode = iosSwipeRef.current.mode;
+
+    iosSwipeRef.current.active = false;
+    iosSwipeRef.current.mode = 'none';
+    iosSwipeRef.current.pointerId = -1;
+
+    const w = dayWRefIOS.current || measureIOSDayWidth();
+    if (!w) return;
+
+    if (mode === 'horizontal') {
+      if (Math.abs(dx) >= IOS_SWIPE_THRESHOLD) {
+        // dx < 0 => next day, dx > 0 => prev day
+        commitIOSSwipe(dx < 0 ? +1 : -1);
+      } else {
+        // snap back
+        setDayTrackStyleIOS({ transform: `translate3d(${-w}px,0,0)`, transition: `transform 170ms ${SNAP_EASE}` });
+      }
+    }
+  };
 
 // ===========================================================================
   // NATIVE SCROLL SNAP LOGIC (Day Swipe)
@@ -843,6 +976,10 @@ function BarberCalendarCore() {
 
   useLayoutEffect(() => {
     if (!selectedDate) return;
+    // iOS translate track reset
+    if (IS_IOS) {
+      requestAnimationFrame(() => resetIOSTrack());
+    }
     clearScrollEndTimer();
     
     requestAnimationFrame(() => {
@@ -864,11 +1001,15 @@ function BarberCalendarCore() {
   useEffect(() => () => clearArmedTimeout(), [clearArmedTimeout]);
 
   const animateCloseDown = () => {
-    setPanelStyle({
-      transform: 'translateY(160px)',
-      opacity: 0,
-      transition: `transform 170ms ${SNAP_EASE}, opacity 150ms ${SNAP_EASE}`,
-    });
+    setPanelStyle(
+      IS_IOS
+        ? { opacity: 0, transition: `opacity 160ms ${SNAP_EASE}` }
+        : {
+            transform: 'translateY(160px)',
+            opacity: 0,
+            transition: `transform 170ms ${SNAP_EASE}, opacity 150ms ${SNAP_EASE}`,
+          },
+    );
     setTimeout(() => {
       setSelectedDate(null);
       setPanelStyle({});
@@ -1463,7 +1604,31 @@ function BarberCalendarCore() {
               <div className="w-10 md:w-12" />
             </div>
 
-            {/* Native Scroll Snap Container - FIX V6 */}
+            {/* iOS: translateX track (no horizontal scroll) */}
+            {IS_IOS ? (
+              <div
+                ref={dayHostRefIOS}
+                className="flex-1 w-full min-h-0 overflow-hidden"
+                style={{ touchAction: 'pan-y' }}
+                onPointerDown={onIOSPointerDown}
+                onPointerMove={onIOSPointerMove}
+                onPointerUp={onIOSPointerUp}
+                onPointerCancel={onIOSPointerUp}
+              >
+                <div className="w-full h-full flex" style={dayTrackStyleIOS}>
+                  <div className="w-full h-full flex-shrink-0" style={{ flex: '0 0 100%' }}>
+                    <DayColumn {...getDayProps(addDays(selectedDate, -1), false)} />
+                  </div>
+                  <div className="w-full h-full flex-shrink-0" style={{ flex: '0 0 100%' }}>
+                    <DayColumn {...getDayProps(selectedDate, true)} />
+                  </div>
+                  <div className="w-full h-full flex-shrink-0" style={{ flex: '0 0 100%' }}>
+                    <DayColumn {...getDayProps(addDays(selectedDate, 1), false)} />
+                  </div>
+                </div>
+              </div>
+            ) : (
+{/* Native Scroll Snap Container - FIX V6 */}
             <div className="flex-1 w-full min-h-0">
               <div
                  ref={dayScrollerRef}
@@ -1481,7 +1646,7 @@ function BarberCalendarCore() {
                   <DayColumn {...getDayProps(selectedDate, true)} />
                   <DayColumn {...getDayProps(addDays(selectedDate, 1), false)} />
                </div>
-            </div>
+            )}            </div>
           </div>
         </div>
       )}
