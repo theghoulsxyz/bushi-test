@@ -1,7 +1,7 @@
 'use client';
 // Bushi Admin — Month grid + Day editor (Native Scroll Snap Fix)
 // FIX V6: Extracted DayColumn to a Memoized Component to fix "White Screen" crash.
-// This prevents React from destroying/recreating the DOM on every swipe.
+// FIX V7: Added translateZ(0) to DayColumn to fix iOS "cut off" rendering bug.
 
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
@@ -23,6 +23,7 @@ const PIN_CODE = '2580';
 function injectBrandFonts() {
   if (typeof document === 'undefined') return;
   if (document.getElementById('bushi-fonts')) return;
+
   const link = document.createElement('link');
   link.id = 'bushi-fonts';
   link.rel = 'stylesheet';
@@ -61,6 +62,7 @@ function injectBushiStyles() {
 // Helpers
 // =============================================================================
 const pad = (n: number) => (n < 10 ? `0${n}` : `${n}`);
+
 const toISODate = (d: Date) =>
   `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 
@@ -74,6 +76,7 @@ function monthMatrix(year: number, month: number) {
   const first = new Date(year, month, 1);
   const startDay = (first.getDay() + 6) % 7; // Monday = 0
   const rows: Date[][] = [];
+
   let cur = 1 - startDay;
   for (let r = 0; r < 6; r++) {
     const row: Date[] = [];
@@ -206,6 +209,7 @@ async function patchClearSlot(day: string, time: string): Promise<boolean> {
 }
 
 const BACKUP_KEY = 'bushi_store_backup_v1';
+
 function saveBackup(store: Store) {
   try {
     const payload = { ts: Date.now(), data: store };
@@ -344,6 +348,7 @@ const SlotRow = React.memo(
 );
 
 // FIX V6: Extracted DayColumn Component to prevent DOM thrashing
+// FIX V7: Added iOS render fix
 const DayColumn = React.memo(({ 
     date, 
     isCurrent, 
@@ -384,6 +389,10 @@ const DayColumn = React.memo(({
                 overscrollBehaviorY: 'contain' as any,
                 overflowAnchor: 'none' as any,
                 paddingBottom: `${bottomPad}px`,
+                // FIX FOR IPHONE CLIPPING: Force GPU layer
+                transform: 'translateZ(0)',
+                backfaceVisibility: 'hidden',
+                touchAction: 'pan-y'
             }}
         >
             <div className="w-full relative min-h-full">
@@ -441,7 +450,6 @@ const DayColumn = React.memo(({
     );
 });
 
-
 // =============================================================================
 // Main Calendar Component
 // =============================================================================
@@ -456,6 +464,7 @@ function BarberCalendarCore() {
 
   const [viewYear, setViewYear] = useState(today.getFullYear());
   const [viewMonth, setViewMonth] = useState(today.getMonth());
+
   const [showYear, setShowYear] = useState(false);
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
 
@@ -464,6 +473,7 @@ function BarberCalendarCore() {
   const searchInputRef = useRef<HTMLInputElement | null>(null);
 
   const [showAvail, setShowAvail] = useState(false);
+
   const [highlight, setHighlight] = useState<{ day: string; time: string; ts: number } | null>(null);
   const [pendingFocus, setPendingFocus] = useState<{ day: string; time: string; ts: number } | null>(null);
 
@@ -472,6 +482,7 @@ function BarberCalendarCore() {
 
   // Keyboard inset for iPhone typing visibility
   const [keyboardInset, setKeyboardInset] = useState(0);
+
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const vv = (window as any).visualViewport as VisualViewport | undefined;
@@ -648,7 +659,7 @@ function BarberCalendarCore() {
   );
 
   const [savedPulse, setSavedPulse] = useState<{ day: string; time: string; ts: number } | null>(null);
-  
+
   const SNAP_EASE = 'cubic-bezier(0.25, 0.9, 0.25, 1)';
   const [panelStyle, setPanelStyle] = useState<React.CSSProperties>({});
 
@@ -656,7 +667,7 @@ function BarberCalendarCore() {
   // NATIVE SCROLL SNAP LOGIC (Day Swipe)
   // ===========================================================================
   const dayScrollerRef = useRef<HTMLDivElement>(null);
-  
+
   // lock + debounce timers
   const isShiftingRef = useRef(false);
   const scrollEndTimerRef = useRef<number | null>(null);
@@ -761,7 +772,7 @@ function BarberCalendarCore() {
   }, [clearScrollEndTimer, handleDayScrollEnd]);
 
   const selectedDayISO = useMemo(() => (selectedDate ? toISODate(selectedDate) : null), [selectedDate]);
-  
+
   useLayoutEffect(() => {
     if (!selectedDate) return;
     clearScrollEndTimer();
@@ -894,6 +905,7 @@ function BarberCalendarCore() {
 
   // Closest available
   type AvailHit = { dayISO: string; time: string };
+
   const closestAvail: AvailHit[] = useMemo(() => {
     const COUNT = 18;
     const MAX_DAYS = 120;
@@ -1243,7 +1255,7 @@ function BarberCalendarCore() {
         >
           <div className="w-[min(100%-28px,860px)] max-w-2xl rounded-3xl border border-neutral-800 bg-neutral-950/95 shadow-2xl px-5 py-5 sm:px-7 sm:py-7">
              <div className="flex items-center justify-between gap-3">
-                <div className="text-[clamp(22px,4.2vw,32px)] leading-none select-none" style={{ fontFamily: BRAND.fontTitle }}>
+               <div className="text-[clamp(22px,4.2vw,32px)] leading-none select-none" style={{ fontFamily: BRAND.fontTitle }}>
                 Най-близки свободни часове
               </div>
               <button
@@ -1255,7 +1267,7 @@ function BarberCalendarCore() {
               </button>
             </div>
             <div className="mt-4 max-h-[62vh] overflow-y-auto pr-1">
-              {closestAvail.length === 0 ? (
+               {closestAvail.length === 0 ? (
                 <div className="text-neutral-400 text-sm" style={{ fontFamily: BRAND.fontBody }}>Няма свободни часове напред.</div>
               ) : (
                 <div className="space-y-3">
@@ -1271,7 +1283,7 @@ function BarberCalendarCore() {
                             onClick={() => openFromAvailability(h.dayISO, h.time)}
                             className="rounded-xl border border-neutral-800 bg-neutral-950/60 hover:bg-neutral-900/70 px-3 py-2 text-center"
                           >
-                            <div className="text-sm font-semibold tabular-nums" style={{ fontFamily: BRAND.fontBody }}>{h.time}</div>
+                             <div className="text-sm font-semibold tabular-nums" style={{ fontFamily: BRAND.fontBody }}>{h.time}</div>
                           </button>
                         ))}
                       </div>
@@ -1318,7 +1330,7 @@ function BarberCalendarCore() {
                       <div className="text-sm text-neutral-200 mb-2" style={{ fontFamily: BRAND.fontBody }}>{formatDayLabel(dayISO)}</div>
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                         {list.map((h) => (
-                          <button key={`${h.dayISO}_${h.time}_${h.name}`} onClick={() => openFromSearch(h.dayISO, h.time)} className="rounded-xl border border-neutral-800 bg-neutral-950/60 hover:bg-neutral-900/70 px-3 py-2 text-left">
+                           <button key={`${h.dayISO}_${h.time}_${h.name}`} onClick={() => openFromSearch(h.dayISO, h.time)} className="rounded-xl border border-neutral-800 bg-neutral-950/60 hover:bg-neutral-900/70 px-3 py-2 text-left">
                             <div className="flex items-center justify-between gap-3">
                               <div className="text-sm font-semibold tabular-nums" style={{ fontFamily: BRAND.fontBody }}>{h.time}</div>
                               <div className="text-sm text-neutral-200 truncate">{h.name}</div>
@@ -1444,7 +1456,7 @@ export default function BarbershopAdminPanel() {
             <div className="rounded-2xl bg-neutral-900/80 border border-white/12 px-4 py-3 flex items-center focus-within:border-white/70 transition">
               <input type="password" inputMode="numeric" autoComplete="off" value={pin} onChange={(e) => setPin(e.target.value)} maxLength={6} className="w-full bg-transparent border-none outline-none text-center text-lg tracking-[0.35em] placeholder:text-neutral-600" style={{ fontFamily: BRAND.fontBody }} placeholder="••••" />
             </div>
-             {error && <div className="text-xs text-red-400 text-center" style={{ fontFamily: BRAND.fontBody }}>{error}</div>}
+            {error && <div className="text-xs text-red-400 text-center" style={{ fontFamily: BRAND.fontBody }}>{error}</div>}
             <button type="submit" className="w-full rounded-2xl bg-white text-black font-semibold py-2.5 text-sm tracking-[0.16em] uppercase hover:bg-neutral-200 transition">Unlock</button>
           </form>
         </div>
