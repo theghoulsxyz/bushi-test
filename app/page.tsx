@@ -358,6 +358,7 @@ const DayColumn = React.memo(({
     isCurrent, 
     dayData, 
     keyboardInset,
+    paintTick,
     remoteReady,
     savedPulse,
     armedRemove,
@@ -380,6 +381,17 @@ const DayColumn = React.memo(({
         }
     }, [isCurrent]);
 
+    // Extra iOS repaint nudge: touching scrollTop + reflow forces Safari to redraw
+    useLayoutEffect(() => {
+        if (!isCurrent) return;
+        const el = dayContentRef.current;
+        if (!el) return;
+        // Re-assert scrollTop (even if 0) and force a reflow
+        el.scrollTop = el.scrollTop;
+        // eslint-disable-next-line @typescript-eslint/no-unused-expressions
+        (el as any).offsetHeight;
+    }, [isCurrent, paintTick]);
+
     // 35px padding + keyboard inset
     const bottomPad = 35 + keyboardInset;
 
@@ -387,7 +399,7 @@ const DayColumn = React.memo(({
         <div
             id={isCurrent ? 'bushi-day-content' : undefined}
             ref={dayContentRef}
-            className="w-full h-full flex-shrink-0 snap-center overflow-y-auto"
+            className="w-full h-full flex-shrink-0 overflow-y-auto"
             style={{
                 WebkitOverflowScrolling: 'touch',
                 overscrollBehaviorY: 'contain' as any,
@@ -404,8 +416,8 @@ const DayColumn = React.memo(({
                 className="w-full relative"
                 style={{ 
                     // Promote a NON-scroll wrapper instead (more stable on iOS than promoting the scroll container)
-                    WebkitTransform: 'translate3d(0,0,0)',
-                    transform: 'translate3d(0,0,0)',
+                    WebkitTransform: isCurrent ? (paintTick % 2 ? 'translate3d(0,0,0) scale(1.00001)' : 'translate3d(0,0,0) scale(1)') : 'translate3d(0,0,0)',
+                    transform: isCurrent ? (paintTick % 2 ? 'translate3d(0,0,0) scale(1.00001)' : 'translate3d(0,0,0) scale(1)') : 'translate3d(0,0,0)',
                     willChange: 'transform',
                 }}
             >
@@ -675,43 +687,34 @@ function BarberCalendarCore() {
   const SNAP_EASE = 'cubic-bezier(0.25, 0.9, 0.25, 1)';
   const [panelStyle, setPanelStyle] = useState<React.CSSProperties>({});
 
-  // Day swipe track style (translateX, iOS-safe)
-  const [dayTrackStyle, setDayTrackStyle] = useState<React.CSSProperties>({ transform: 'translate3d(-100%,0,0)' });
+  // iOS paint nudge (forces Safari to redraw long slot lists after fast day swipes)
+  const [paintTick, setPaintTick] = useState(0);
 
   // ===========================================================================
-  // iOS SAFE DAY SWIPE (TranslateX — no horizontal overflow / no scroll-snap)
+  // NATIVE SCROLL SNAP LOGIC (Day Swipe)
   // ===========================================================================
-  const dayHostRef = useRef<HTMLDivElement>(null);   // visible viewport inside the modal
-  const dayWRef = useRef<number>(0);
+  const dayScrollerRef = useRef<HTMLDivElement>(null);
 
-  // lock + timing guard (prevents double swipes)
+  // lock + debounce timers
   const isShiftingRef = useRef(false);
+  const scrollEndTimerRef = useRef<number | null>(null);
   const lastShiftAtRef = useRef<number>(0);
 
-  // touch tracking
-  const dayStartX = useRef<number | null>(null);
-  const dayStartY = useRef<number | null>(null);
-  const dayDX = useRef<number>(0);
-  const dayDY = useRef<number>(0);
-  const dayModeRef = useRef<'none' | 'horizontal'>('none');
-
-  const DAY_SWIPE_THRESHOLD = 70;
-  const DAY_H_CLAMP = 260;
-
-  const measureDayWidth = useCallback(() => {
-    const host = dayHostRef.current;
-    if (!host) return 0;
-    const w = host.offsetWidth || 0;
-    if (w) dayWRef.current = w;
-    return w;
+  const clearScrollEndTimer = useCallback(() => {
+    if (scrollEndTimerRef.current != null) {
+      window.clearTimeout(scrollEndTimerRef.current);
+      scrollEndTimerRef.current = null;
+    }
   }, []);
 
-  const resetDayTrack = useCallback(() => {
-    const w = measureDayWidth();
+  const centerDayScroller = useCallback((behavior: 'auto' | 'smooth' = 'auto') => {
+    const el = dayScrollerRef.current;
+    if (!el) return;
+    const w = el.offsetWidth;
     if (!w) return;
-    // Center panel = -w
-    setDayTrackStyle({ transform: `translate3d(${-w}px,0,0)`, transition: 'none' });
-  }, [measureDayWidth]);
+    if (behavior === 'smooth') el.scrollTo({ left: w, behavior: 'smooth' });
+    else el.scrollLeft = w;
+  }, []);
 
   const shiftSelectedDay = (delta: number) => {
     setSelectedDate((prev) => {
@@ -725,134 +728,109 @@ function BarberCalendarCore() {
     });
   };
 
-  const commitDaySwipe = useCallback(
+  const commitShiftDay = useCallback(
     (delta: number) => {
-      const w = dayWRef.current || measureDayWidth();
+      const el = dayScrollerRef.current;
+      if (!el) return;
+      const w = el.offsetWidth;
       if (!w) return;
 
       const now = Date.now();
+      // hard guard for fast swipes
       if (now - lastShiftAtRef.current < 260) {
-        // too fast → snap back
-        setDayTrackStyle({ transform: `translate3d(${-w}px,0,0)`, transition: `transform 170ms ${SNAP_EASE}` });
+        centerDayScroller('auto');
         return;
       }
 
       lastShiftAtRef.current = now;
       isShiftingRef.current = true;
 
-      const targetX = delta > 0 ? -2 * w : 0;
+      (el.style as any).scrollSnapType = 'none';
+      el.scrollLeft = w;
+      // eslint-disable-next-line @typescript-eslint/no-unused-expressions
+      (el as any).offsetHeight; 
 
-      setDayTrackStyle({ transform: `translate3d(${targetX}px,0,0)`, transition: `transform 170ms ${SNAP_EASE}` });
+      requestAnimationFrame(() => {
+        const cur = dayScrollerRef.current;
+        if (!cur) return;
+        (cur.style as any).scrollSnapType = '';
+      });
+
+      shiftSelectedDay(delta);
+
+      // Force a tiny style nudge so iOS Safari repaints the long slot list
+      setPaintTick((t) => t + 1);
+
+      // iOS Safari sometimes visually "clips" long overflow content after fast snap swipes.
+      // Force a repaint/reflow cycle once the day changes.
+      requestAnimationFrame(() => {
+        const cur = dayScrollerRef.current;
+        if (!cur) return;
+        // Trigger layout
+        // eslint-disable-next-line @typescript-eslint/no-unused-expressions
+        (cur as any).offsetHeight;
+        const currentCol = document.getElementById('bushi-day-content') as HTMLDivElement | null;
+        if (currentCol) {
+          // Re-assert scrollTop (even if already 0) to trigger paint
+          currentCol.scrollTop = currentCol.scrollTop;
+          // eslint-disable-next-line @typescript-eslint/no-unused-expressions
+          (currentCol as any).offsetHeight;
+        }
+      });
 
       window.setTimeout(() => {
-        shiftSelectedDay(delta);
-        // After state update, reset track instantly back to center position
-        requestAnimationFrame(() => {
-          const w2 = dayWRef.current || measureDayWidth() || w;
-          dayWRef.current = w2;
-          setDayTrackStyle({ transform: `translate3d(${-w2}px,0,0)`, transition: 'none' });
-          isShiftingRef.current = false;
-        });
-      }, 170);
+        isShiftingRef.current = false;
+      }, 520);
     },
-    [measureDayWidth, viewMonth, viewYear],
+    [centerDayScroller, viewMonth, viewYear],
   );
 
-  const onDayTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
-    if (isShiftingRef.current) return;
-    if (isTypingTarget(e.target as any)) return;
-
-    const t = e.touches[0];
-    dayStartX.current = t.clientX;
-    dayStartY.current = t.clientY;
-    dayDX.current = 0;
-    dayDY.current = 0;
-    dayModeRef.current = 'none';
-
-    // kill transition so drag feels 1:1
-    setDayTrackStyle((cur) => ({ ...cur, transition: 'none' }));
-  };
-
-  const onDayTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
-    if (dayStartX.current == null || dayStartY.current == null) return;
+  const handleDayScrollEnd = useCallback(() => {
+    const el = dayScrollerRef.current;
+    if (!el) return;
     if (isShiftingRef.current) return;
 
-    const t = e.touches[0];
-    const dxRaw = t.clientX - dayStartX.current;
-    const dyRaw = t.clientY - dayStartY.current;
-    dayDX.current = dxRaw;
-    dayDY.current = dyRaw;
+    const w = el.offsetWidth;
+    if (!w) return;
+    const sl = el.scrollLeft;
+    const EDGE = 2;
 
-    if (dayModeRef.current === 'none') {
-      if (Math.abs(dxRaw) > 12 && Math.abs(dxRaw) > Math.abs(dyRaw) * 1.15) {
-        dayModeRef.current = 'horizontal';
-      } else {
-        return; // let vertical scroll happen
-      }
+    if (sl <= EDGE) {
+      commitShiftDay(-1);
+      return;
     }
-
-    if (dayModeRef.current === 'horizontal') {
-      // prevent vertical scroll while swiping days
-      e.preventDefault();
-
-      const w = dayWRef.current || measureDayWidth();
-      if (!w) return;
-
-      const clampPx = Math.min(DAY_H_CLAMP, Math.round(w * 0.45));
-      const dx = clamp(dxRaw, -clampPx, clampPx);
-
-      // Center is -w
-      setDayTrackStyle({ transform: `translate3d(${-w + dx}px,0,0)`, transition: 'none' });
-    }
-  };
-
-  const onDayTouchEnd = () => {
-    const dx = dayDX.current;
-    dayStartX.current = null;
-    dayStartY.current = null;
-    dayDX.current = 0;
-    dayDY.current = 0;
-
-    const w = dayWRef.current || measureDayWidth();
-    if (!w) {
-      dayModeRef.current = 'none';
+    if (sl >= w * 2 - EDGE) {
+      commitShiftDay(+1);
       return;
     }
 
-    if (dayModeRef.current === 'horizontal') {
-      if (Math.abs(dx) >= DAY_SWIPE_THRESHOLD) {
-        // dx < 0 => next day, dx > 0 => prev day
-        commitDaySwipe(dx < 0 ? +1 : -1);
-      } else {
-        // snap back
-        setDayTrackStyle({ transform: `translate3d(${-w}px,0,0)`, transition: `transform 170ms ${SNAP_EASE}` });
-      }
-      dayModeRef.current = 'none';
-      return;
+    if (Math.abs(sl - w) > EDGE) {
+      centerDayScroller('smooth');
     }
+  }, [centerDayScroller, commitShiftDay]);
 
-    dayModeRef.current = 'none';
-  };
-
+  const onDayScroll = useCallback(() => {
+    if (isShiftingRef.current) return;
+    clearScrollEndTimer();
+    scrollEndTimerRef.current = window.setTimeout(() => {
+      scrollEndTimerRef.current = null;
+      handleDayScrollEnd();
+    }, 90);
+  }, [clearScrollEndTimer, handleDayScrollEnd]);
 
   const selectedDayISO = useMemo(() => (selectedDate ? toISODate(selectedDate) : null), [selectedDate]);
 
   useLayoutEffect(() => {
     if (!selectedDate) return;
+    clearScrollEndTimer();
+    
     requestAnimationFrame(() => {
-      resetDayTrack();
+      centerDayScroller('auto');
       requestAnimationFrame(() => {
         isShiftingRef.current = false;
       });
     });
-  }, [selectedDayISO, selectedDate, resetDayTrack]);
-
-  useEffect(() => {
-    if (!selectedDate) return;
-    const onR = () => resetDayTrack();
-    window.addEventListener('resize', onR);
-    return () => window.removeEventListener('resize', onR);
-  }, [selectedDate, resetDayTrack]);
+  }, [selectedDayISO, selectedDate, centerDayScroller, clearScrollEndTimer]);
 
   useEffect(() => {
     setPanelStyle({});
@@ -1188,6 +1166,7 @@ function BarberCalendarCore() {
         savedPulse,
         armedRemove,
         highlight,
+        paintTick,
         startEditing,
         stopEditing,
         saveName,
@@ -1195,7 +1174,7 @@ function BarberCalendarCore() {
         confirmRemove,
         revealFocus
     };
-  }, [store, keyboardInset, remoteReady, savedPulse, armedRemove, highlight, startEditing, stopEditing, saveName, armRemove, confirmRemove, revealFocus]);
+  }, [store, keyboardInset, paintTick, remoteReady, savedPulse, armedRemove, highlight, startEditing, stopEditing, saveName, armRemove, confirmRemove, revealFocus]);
 
   return (
     <div
@@ -1462,27 +1441,22 @@ function BarberCalendarCore() {
               <div className="w-10 md:w-12" />
             </div>
 
-            {/* Day swipe viewport (translateX track) */}
-            <div ref={dayHostRef} className="flex-1 w-full min-h-0 overflow-hidden">
+            {/* Native Scroll Snap Container - FIX V6 */}
+            <div className="flex-1 w-full min-h-0">
               <div
-                onTouchStart={onDayTouchStart}
-                onTouchMove={onDayTouchMove}
-                onTouchEnd={onDayTouchEnd}
-                onTouchCancel={onDayTouchEnd}
-                className="w-full h-full flex"
-                style={dayTrackStyle}
+                 ref={dayScrollerRef}
+                 onScroll={onDayScroll}
+                 className="w-full h-full flex overflow-x-auto snap-x snap-mandatory no-scrollbar"
+                 style={{
+                   WebkitOverflowScrolling: 'touch',
+                   overscrollBehaviorX: 'contain' as any,
+                 }}
               >
-                {/* We keep 3 columns mounted (prev / current / next) */}
-                <div className="w-full h-full flex-shrink-0" style={{ flex: '0 0 100%' }}>
+                  {/* We use the extracted component <DayColumn /> here */}
                   <DayColumn {...getDayProps(addDays(selectedDate, -1), false)} />
-                </div>
-                <div className="w-full h-full flex-shrink-0" style={{ flex: '0 0 100%' }}>
                   <DayColumn {...getDayProps(selectedDate, true)} />
-                </div>
-                <div className="w-full h-full flex-shrink-0" style={{ flex: '0 0 100%' }}>
                   <DayColumn {...getDayProps(addDays(selectedDate, 1), false)} />
-                </div>
-              </div>
+               </div>
             </div>
           </div>
         </div>
