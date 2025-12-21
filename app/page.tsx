@@ -22,6 +22,13 @@ const BRAND = {
 
 const PIN_CODE = '2580';
 
+// iOS detection used by both the popup day editor and DayColumn
+const IS_IOS =
+  typeof navigator !== 'undefined' &&
+  (/iPad|iPhone|iPod/.test(navigator.userAgent || '') ||
+    (navigator.platform === 'MacIntel' && (navigator as any).maxTouchPoints > 1));
+
+
 function injectBrandFonts() {
   if (typeof document === 'undefined') return;
   if (document.getElementById('bushi-fonts')) return;
@@ -678,13 +685,6 @@ function BarberCalendarCore() {
   // iOS Safari compositor workaround: long nested overflow lists can "stop painting"
   // when momentum scrolling + scroll-snap are involved. Disabling momentum scrolling
   // for the slot list (and the day swipe strip) on iOS is the most reliable fix.
-  const IS_IOS = useMemo(() => {
-    if (typeof navigator === 'undefined') return false;
-    const ua = navigator.userAgent || '';
-    const iDevice = /iPad|iPhone|iPod/.test(ua);
-    const iPadOS13Plus = navigator.platform === 'MacIntel' && (navigator as any).maxTouchPoints > 1;
-    return iDevice || iPadOS13Plus;
-  }, []);
 
 
   // ===========================================================================
