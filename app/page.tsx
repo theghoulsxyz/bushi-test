@@ -393,18 +393,20 @@ const DayColumn = React.memo(({
                 overscrollBehaviorY: 'contain' as any,
                 overflowAnchor: 'none' as any,
                 paddingBottom: `${bottomPad}px`,
-                // OUTER LAYER PROMOTION
-                transform: 'translateZ(0)',
-                backfaceVisibility: 'hidden',
+                // iOS Safari can "stop painting" long overflow lists when the scroll container
+                // (or its ancestors) are promoted to their own compositing layer.
+                // Use containment/isolation instead of transform on the scroll container.
+                contain: 'layout paint' as any,
+                isolation: 'isolate' as any,
             }}
         >
             <div 
                 className="w-full relative"
                 style={{ 
-                    // INNER LAYER PROMOTION (Critical for "Ghost Content" fix)
-                    transform: 'translateZ(0)',
-                    // Force iOS to acknowledge this is taller than viewport
-                    minHeight: '100.5%' 
+                    // Promote a NON-scroll wrapper instead (more stable on iOS than promoting the scroll container)
+                    WebkitTransform: 'translate3d(0,0,0)',
+                    transform: 'translate3d(0,0,0)',
+                    willChange: 'transform',
                 }}
             >
                 <div
@@ -740,6 +742,23 @@ function BarberCalendarCore() {
       });
 
       shiftSelectedDay(delta);
+
+      // iOS Safari sometimes visually "clips" long overflow content after fast snap swipes.
+      // Force a repaint/reflow cycle once the day changes.
+      requestAnimationFrame(() => {
+        const cur = dayScrollerRef.current;
+        if (!cur) return;
+        // Trigger layout
+        // eslint-disable-next-line @typescript-eslint/no-unused-expressions
+        (cur as any).offsetHeight;
+        const currentCol = document.getElementById('bushi-day-content') as HTMLDivElement | null;
+        if (currentCol) {
+          // Re-assert scrollTop (even if already 0) to trigger paint
+          currentCol.scrollTop = currentCol.scrollTop;
+          // eslint-disable-next-line @typescript-eslint/no-unused-expressions
+          (currentCol as any).offsetHeight;
+        }
+      });
 
       window.setTimeout(() => {
         isShiftingRef.current = false;
@@ -1197,7 +1216,7 @@ function BarberCalendarCore() {
         {/* Month grid */}
         <div
           className="mt-[clamp(10px,2.2vw,20px)] flex-1 grid grid-cols-7 gap-[clamp(4px,2vw,16px)] overflow-visible pb-[clamp(24px,3.2vw,48px)]"
-          style={{ fontFamily: BRAND.fontNumbers, gridAutoRows: '1fr', touchAction: 'pan-y', ...monthStyle }}
+          style={{ fontFamily: BRAND.fontNumbers, gridAutoRows: '1fr', ...monthStyle }}
           onTouchStart={onMonthTouchStart}
           onTouchMove={onMonthTouchMove}
           onTouchEnd={onMonthTouchEnd}
@@ -1404,14 +1423,16 @@ function BarberCalendarCore() {
             </div>
 
             {/* Native Scroll Snap Container - FIX V6 */}
-            <div className="flex-1 relative w-full h-full min-h-0">
+            <div className="flex-1 w-full min-h-0">
               <div
                  ref={dayScrollerRef}
                  onScroll={onDayScroll}
-                 className="absolute inset-0 flex overflow-x-auto snap-x snap-mandatory no-scrollbar"
+                 className="w-full h-full flex overflow-x-auto snap-x snap-mandatory no-scrollbar"
                  style={{
                    WebkitOverflowScrolling: 'touch',
                    overscrollBehaviorX: 'contain' as any,
+                   // Helps iOS Safari repaint long scrollable content after fast snap swipes
+                   WebkitTransform: 'translate3d(0,0,0)',
                  }}
               >
                   {/* We use the extracted component <DayColumn /> here */}
