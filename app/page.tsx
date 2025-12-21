@@ -397,6 +397,7 @@ const DayColumn = React.memo(({
             className="w-full h-full flex-shrink-0 snap-center overflow-y-auto"
             style={{
                 WebkitOverflowScrolling: IS_IOS ? 'auto' : 'touch',
+                touchAction: IS_IOS ? ('pan-y' as any) : undefined,
                 overscrollBehaviorY: 'contain' as any,
                 overflowAnchor: 'none' as any,
                 paddingBottom: `${bottomPad}px`,
@@ -772,7 +773,6 @@ function BarberCalendarCore() {
   const onIOSPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!IS_IOS) return;
     if (isShiftingRef.current) return;
-    if (isTypingTarget(e.target as any)) return;
 
     iosSwipeRef.current.active = true;
     iosSwipeRef.current.mode = 'none';
@@ -809,6 +809,8 @@ function BarberCalendarCore() {
     }
 
     if (iosSwipeRef.current.mode === 'horizontal') {
+      // Stop the vertical scroller from stealing the gesture once we commit to horizontal swipe
+      e.preventDefault();
       const w = dayWRefIOS.current || measureIOSDayWidth();
       if (!w) return;
 
@@ -1605,11 +1607,11 @@ function BarberCalendarCore() {
               <div
                 ref={dayHostRefIOS}
                 className="flex-1 w-full min-h-0 overflow-hidden"
-                style={{ touchAction: 'pan-y' }}
-                onPointerDown={onIOSPointerDown}
-                onPointerMove={onIOSPointerMove}
-                onPointerUp={onIOSPointerUp}
-                onPointerCancel={onIOSPointerUp}
+                style={{ touchAction: 'pan-y', WebkitTapHighlightColor: 'transparent', WebkitUserSelect: 'none' as any, userSelect: 'none' as any }}
+                onPointerDownCapture={onIOSPointerDown}
+                onPointerMoveCapture={onIOSPointerMove}
+                onPointerUpCapture={onIOSPointerUp}
+                onPointerCancelCapture={onIOSPointerUp}
               >
                 <div className="w-full h-full flex" style={dayTrackStyleIOS}>
                   <div className="w-full h-full flex-shrink-0" style={{ flex: '0 0 100%' }}>
