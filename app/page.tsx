@@ -1312,6 +1312,115 @@ function BarberCalendarCore() {
     monthModeRef.current = 'none';
     monthBlockClickRef.current = false;
   };
+  // Year modal swipe gestures (left/right to change year)
+  const yearStartX = useRef<number | null>(null);
+  const yearStartY = useRef<number | null>(null);
+  const yearDX = useRef<number>(0);
+  const yearDY = useRef<number>(0);
+  const yearModeRef = useRef<'none' | 'horizontal'>('none');
+  const yearBlockClickRef = useRef(false);
+
+  const YEAR_SWIPE_THRESHOLD = 70;
+  const YEAR_H_CLAMP = 240;
+
+  useEffect(() => {
+    if (!showYear) return;
+    setYearStyle({});
+    yearModeRef.current = 'none';
+    yearBlockClickRef.current = false;
+  }, [showYear, viewYear]);
+
+  const shiftYearView = (delta: number) => {
+    setViewYear((y) => y + delta);
+  };
+
+  const animateYearShift = (delta: number) => {
+    // small slide + fade animation
+    setYearStyle({
+      transform: `translateX(${delta > 0 ? -22 : 22}px)`,
+      opacity: 0.55,
+      transition: `transform 160ms ${SNAP_EASE}, opacity 160ms ${SNAP_EASE}`,
+    });
+
+    setTimeout(() => {
+      shiftYearView(delta);
+      setYearStyle({
+        transform: `translateX(${delta > 0 ? 22 : -22}px)`,
+        opacity: 0.55,
+        transition: 'none',
+      });
+      requestAnimationFrame(() => {
+        setYearStyle({
+          transform: 'translateX(0)',
+          opacity: 1,
+          transition: `transform 160ms ${SNAP_EASE}, opacity 160ms ${SNAP_EASE}`,
+        });
+      });
+    }, 160);
+  };
+
+  const onYearTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
+    const t = e.touches[0];
+    yearStartX.current = t.clientX;
+    yearStartY.current = t.clientY;
+    yearDX.current = 0;
+    yearDY.current = 0;
+    yearModeRef.current = 'none';
+  };
+
+  const onYearTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (yearStartX.current == null || yearStartY.current == null) return;
+
+    const dxRaw = e.touches[0].clientX - yearStartX.current;
+    const dyRaw = e.touches[0].clientY - yearStartY.current;
+    yearDX.current = dxRaw;
+    yearDY.current = dyRaw;
+
+    if (yearModeRef.current === 'none') {
+      if (Math.abs(dxRaw) > 12 && Math.abs(dxRaw) > Math.abs(dyRaw) * 1.15) {
+        yearModeRef.current = 'horizontal';
+        yearBlockClickRef.current = true;
+      } else {
+        return;
+      }
+    }
+
+    if (yearModeRef.current === 'horizontal') {
+      // keep the modal stable while swiping
+      e.preventDefault();
+      const dx = clamp(dxRaw, -YEAR_H_CLAMP, YEAR_H_CLAMP);
+      setYearStyle({ transform: `translateX(${dx}px)`, opacity: 0.85, transition: 'none' });
+    }
+  };
+
+  const onYearTouchEnd = () => {
+    if (yearStartX.current == null) return;
+    const dx = yearDX.current;
+
+    yearStartX.current = null;
+    yearStartY.current = null;
+    yearDX.current = 0;
+    yearDY.current = 0;
+
+    if (yearModeRef.current === 'horizontal') {
+      if (Math.abs(dx) >= YEAR_SWIPE_THRESHOLD) {
+        animateYearShift(dx < 0 ? +1 : -1);
+      } else {
+        setYearStyle({ transform: 'translateX(0)', opacity: 1, transition: `transform 140ms ${SNAP_EASE}, opacity 140ms ${SNAP_EASE}` });
+      }
+
+      setTimeout(() => {
+        yearBlockClickRef.current = false;
+      }, 220);
+
+      yearModeRef.current = 'none';
+      return;
+    }
+
+    yearModeRef.current = 'none';
+    yearBlockClickRef.current = false;
+  };
+
 
   const [yearStyle, setYearStyle] = useState<React.CSSProperties>({});
 
@@ -1558,8 +1667,20 @@ function BarberCalendarCore() {
 
       {/* Year Modal */}
       {showYear && (
-        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/70" onClick={() => setShowYear(false)}>
-          <div className="w-[min(100%-32px,820px)] max-w-xl rounded-3xl border border-neutral-800 bg-neutral-950/95 shadow-2xl px-6 py-6 sm:px-8 sm:py-8" style={yearStyle} onClick={(e) => e.stopPropagation()}>
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/70" onClick={(e) => {
+          if (yearBlockClickRef.current) {
+            e.preventDefault();
+            yearBlockClickRef.current = false;
+            return;
+          }
+          setShowYear(false);
+        }}>
+          <div className="w-[min(100%-32px,820px)] max-w-xl rounded-3xl border border-neutral-800 bg-neutral-950/95 shadow-2xl px-6 py-6 sm:px-8 sm:py-8" style={{ ...yearStyle, touchAction: 'pan-y' as any }}
+            onTouchStart={onYearTouchStart}
+            onTouchMove={onYearTouchMove}
+            onTouchEnd={onYearTouchEnd}
+            onTouchCancel={onYearTouchEnd}
+            onClick={(e) => e.stopPropagation()}>
              <div className="flex items-center justify-center">
               <div className="text-[clamp(30px,6vw,44px)] leading-none select-none" style={{ fontFamily: BRAND.fontTitle }}>{viewYear}</div>
             </div>
@@ -1567,7 +1688,16 @@ function BarberCalendarCore() {
               {MONTHS.map((label, idx) => (
                 <button
                   key={label + viewYear}
-                  onClick={() => { setViewMonth(idx); setShowYear(false); }}
+                  onClick={(e) => {
+                    if (yearBlockClickRef.current) {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      yearBlockClickRef.current = false;
+                      return;
+                    }
+                    setViewMonth(idx);
+                    setShowYear(false);
+                  }}
                   className={`h-11 sm:h-12 rounded-2xl border text-[13px] sm:text-[14px] uppercase tracking-[0.12em] transition ${
                     idx === viewMonth ? 'border-white text-white bg-neutral-900' : 'border-neutral-700/70 text-neutral-200 bg-neutral-900/50 hover:bg-neutral-800'
                   }`}
