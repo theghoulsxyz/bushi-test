@@ -419,6 +419,8 @@ const DayColumn = React.memo(({
                     WebkitTransform: isCurrent ? (paintTick % 2 ? 'translate3d(0,0,0) scale(1.00001)' : 'translate3d(0,0,0) scale(1)') : 'translate3d(0,0,0)',
                     transform: isCurrent ? (paintTick % 2 ? 'translate3d(0,0,0) scale(1.00001)' : 'translate3d(0,0,0) scale(1)') : 'translate3d(0,0,0)',
                     willChange: 'transform',
+                    minHeight: '100%',
+                    backfaceVisibility: 'hidden',
                 }}
             >
                 <div
