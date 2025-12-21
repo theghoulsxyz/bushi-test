@@ -305,7 +305,7 @@ const SlotRow = React.memo(
               el.dataset.orig = el.value;
               onSave(dayISO, time, el.value);
             }}
-            className="block w-full lg:max-w-[560px] lg:mx-auto text-white bg-[rgb(10,10,10)] border border-neutral-700/70 focus:border-white/70 focus:outline-none focus:ring-0 rounded-lg px-3 py-1.5 text-center transition-all duration-200"
+            className="block w-full text-white bg-[rgb(10,10,10)] border border-neutral-700/70 focus:border-white/70 focus:outline-none focus:ring-0 rounded-lg px-3 py-1.5 text-center transition-all duration-200"
             style={{ fontFamily: BRAND.fontBody }}
           />
 
@@ -393,22 +393,24 @@ const DayColumn = React.memo(({
                 overscrollBehaviorY: 'contain' as any,
                 overflowAnchor: 'none' as any,
                 paddingBottom: `${bottomPad}px`,
-                // OUTER LAYER PROMOTION
-                transform: 'translateZ(0)',
-                backfaceVisibility: 'hidden',
+                // iOS Safari can "stop painting" long overflow lists when the scroll container
+                // (or its ancestors) are promoted to their own compositing layer.
+                // Use containment/isolation instead of transform on the scroll container.
+                contain: 'layout paint' as any,
+                isolation: 'isolate' as any,
             }}
         >
             <div 
                 className="w-full relative"
                 style={{ 
-                    // INNER LAYER PROMOTION (Critical for "Ghost Content" fix)
-                    transform: 'translateZ(0)',
-                    // Force iOS to acknowledge this is taller than viewport
-                    minHeight: '100.5%' 
+                    // Promote a NON-scroll wrapper instead (more stable on iOS than promoting the scroll container)
+                    WebkitTransform: 'translate3d(0,0,0)',
+                    transform: 'translate3d(0,0,0)',
+                    willChange: 'transform',
                 }}
             >
                 <div
-                    className="w-full grid grid-cols-1 sm:grid-cols-2 gap-2.5 px-2 sm:px-2 lg:px-0 lg:max-w-[980px] lg:mx-auto"
+                    className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 px-0.5"
                     style={{ gridAutoRows: 'min-content' }}
                 >
                     {DAY_SLOTS.map((time) => {
@@ -674,67 +676,6 @@ function BarberCalendarCore() {
   const [panelStyle, setPanelStyle] = useState<React.CSSProperties>({});
 
   // ===========================================================================
-  // TRANSLATEX SWIPE (iOS-safe) — replaces scroll-snap day swipe
-  // ===========================================================================
-  // iOS Safari can "stop painting" long scrollable content inside snap/overflow compositing layers.
-  // We avoid horizontal scrolling entirely: we translate a 3-column track and commit on release.
-  const dayTrackRef = useRef<HTMLDivElement>(null);
-  const swipeStateRef = useRef({
-    active: false,
-    startX: 0,
-    lastX: 0,
-    width: 0,
-    pointerId: -1,
-  });
-
-  const [dragX, setDragX] = useState(0); // px
-  const [isDragging, setIsDragging] = useState(false);
-
-  const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
-
-  const beginSwipe = (clientX: number, pointerId: number) => {
-    const w = dayTrackRef.current?.offsetWidth || 0;
-    swipeStateRef.current = { active: true, startX: clientX, lastX: clientX, width: w, pointerId };
-    setIsDragging(true);
-    setDragX(0);
-  };
-
-  const moveSwipe = (clientX: number) => {
-    if (!swipeStateRef.current.active) return;
-    const dx = clientX - swipeStateRef.current.startX;
-    // Don't allow crazy drags; keep it stable and predictable
-    setDragX(clamp(dx, -220, 220));
-    swipeStateRef.current.lastX = clientX;
-  };
-
-  const endSwipe = () => {
-    if (!swipeStateRef.current.active) return;
-    const w = swipeStateRef.current.width || (dayTrackRef.current?.offsetWidth || 0);
-    const threshold = Math.max(70, Math.round(w * 0.18)); // px
-    const dx = dragX;
-
-    swipeStateRef.current.active = false;
-    setIsDragging(false);
-
-    if (dx <= -threshold) {
-      // swipe left -> next day
-      setDragX(0);
-      shiftSelectedDay(1);
-      return;
-    }
-    if (dx >= threshold) {
-      // swipe right -> prev day
-      setDragX(0);
-      shiftSelectedDay(-1);
-      return;
-    }
-
-    // snap back
-    setDragX(0);
-  };
-
-
-  // ===========================================================================
   // NATIVE SCROLL SNAP LOGIC (Day Swipe)
   // ===========================================================================
   const dayScrollerRef = useRef<HTMLDivElement>(null);
@@ -801,6 +742,23 @@ function BarberCalendarCore() {
       });
 
       shiftSelectedDay(delta);
+
+      // iOS Safari sometimes visually "clips" long overflow content after fast snap swipes.
+      // Force a repaint/reflow cycle once the day changes.
+      requestAnimationFrame(() => {
+        const cur = dayScrollerRef.current;
+        if (!cur) return;
+        // Trigger layout
+        // eslint-disable-next-line @typescript-eslint/no-unused-expressions
+        (cur as any).offsetHeight;
+        const currentCol = document.getElementById('bushi-day-content') as HTMLDivElement | null;
+        if (currentCol) {
+          // Re-assert scrollTop (even if already 0) to trigger paint
+          currentCol.scrollTop = currentCol.scrollTop;
+          // eslint-disable-next-line @typescript-eslint/no-unused-expressions
+          (currentCol as any).offsetHeight;
+        }
+      });
 
       window.setTimeout(() => {
         isShiftingRef.current = false;
@@ -1258,7 +1216,7 @@ function BarberCalendarCore() {
         {/* Month grid */}
         <div
           className="mt-[clamp(10px,2.2vw,20px)] flex-1 grid grid-cols-7 gap-[clamp(4px,2vw,16px)] overflow-visible pb-[clamp(24px,3.2vw,48px)]"
-          style={{ fontFamily: BRAND.fontNumbers, gridAutoRows: '1fr', touchAction: 'pan-y', ...monthStyle }}
+          style={{ fontFamily: BRAND.fontNumbers, gridAutoRows: '1fr', ...monthStyle }}
           onTouchStart={onMonthTouchStart}
           onTouchMove={onMonthTouchMove}
           onTouchEnd={onMonthTouchEnd}
@@ -1445,10 +1403,10 @@ function BarberCalendarCore() {
 
       {/* Day Editor Modal */}
       {selectedDate && selectedDayISO && (
-        <div className="fixed inset-0 z-50 bg-black/90" onMouseDown={() => setSelectedDate(null)}>
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/80" onMouseDown={() => setSelectedDate(null)}>
           <div
-            className="fixed inset-0 w-full h-full bg-[#0b0b0b] overflow-hidden flex flex-col"
-            style={{ ...panelStyle, paddingTop: 'calc(env(safe-area-inset-top) + 14px)', paddingBottom: 'calc(env(safe-area-inset-bottom) + 14px)' }}
+            className="max-w-6xl w-[94vw] md:w-[1100px] h-[90vh] rounded-2xl border border-neutral-700 bg-[rgb(10,10,10)] p-4 md:p-6 shadow-2xl overflow-hidden flex flex-col"
+            style={panelStyle}
             onMouseDown={(e) => e.stopPropagation()}
             onTouchStart={(e) => e.stopPropagation()}
           >
@@ -1467,75 +1425,21 @@ function BarberCalendarCore() {
             {/* Native Scroll Snap Container - FIX V6 */}
             <div className="flex-1 w-full min-h-0">
               <div
-                ref={dayTrackRef}
-                className="w-full h-full overflow-hidden"
-                style={{
-                  // Prevent browser back/forward swipe stealing inside the editor
-                  touchAction: 'pan-y',
-                }}
-                onPointerDown={(e) => {
-                  // Only left-click/touch
-                  if ((e as any).button != null && (e as any).button !== 0) return;
-                  (e.currentTarget as any).setPointerCapture?.(e.pointerId);
-                  e.stopPropagation();
-                  beginSwipe(e.clientX, e.pointerId);
-                }}
-                onPointerMove={(e) => {
-                  if (!swipeStateRef.current.active) return;
-                  e.stopPropagation();
-                  moveSwipe(e.clientX);
-                }}
-                onPointerUp={(e) => {
-                  e.stopPropagation();
-                  endSwipe();
-                }}
-                onPointerCancel={(e) => {
-                  e.stopPropagation();
-                  endSwipe();
-                }}
-                // Fallback for older iOS: touch events
-                onTouchStart={(e) => {
-                  e.stopPropagation();
-                  const t = e.touches[0];
-                  if (!t) return;
-                  beginSwipe(t.clientX, -1);
-                }}
-                onTouchMove={(e) => {
-                  if (!swipeStateRef.current.active) return;
-                  e.stopPropagation();
-                  const t = e.touches[0];
-                  if (!t) return;
-                  moveSwipe(t.clientX);
-                }}
-                onTouchEnd={(e) => {
-                  e.stopPropagation();
-                  endSwipe();
-                }}
-                onTouchCancel={(e) => {
-                  e.stopPropagation();
-                  endSwipe();
-                }}
+                 ref={dayScrollerRef}
+                 onScroll={onDayScroll}
+                 className="w-full h-full flex overflow-x-auto snap-x snap-mandatory no-scrollbar"
+                 style={{
+                   WebkitOverflowScrolling: 'touch',
+                   overscrollBehaviorX: 'contain' as any,
+                   // Helps iOS Safari repaint long scrollable content after fast snap swipes
+                   WebkitTransform: 'translate3d(0,0,0)',
+                 }}
               >
-                <div
-                  className="h-full flex"
-                  style={{
-                    width: '300%',
-                    transform: `translate3d(calc(-100% + ${dragX}px), 0, 0)`,
-                    transition: isDragging ? 'none' : `transform 180ms cubic-bezier(0.22, 0.9, 0.25, 1)`,
-                    willChange: 'transform',
-                  }}
-                >
-                  <div className="w-full h-full flex-shrink-0">
-                    <DayColumn {...getDayProps(addDays(selectedDate, -1), false)} />
-                  </div>
-                  <div className="w-full h-full flex-shrink-0">
-                    <DayColumn {...getDayProps(selectedDate, true)} />
-                  </div>
-                  <div className="w-full h-full flex-shrink-0">
-                    <DayColumn {...getDayProps(addDays(selectedDate, 1), false)} />
-                  </div>
-                </div>
-              </div>
+                  {/* We use the extracted component <DayColumn /> here */}
+                  <DayColumn {...getDayProps(addDays(selectedDate, -1), false)} />
+                  <DayColumn {...getDayProps(selectedDate, true)} />
+                  <DayColumn {...getDayProps(addDays(selectedDate, 1), false)} />
+               </div>
             </div>
           </div>
         </div>
