@@ -403,12 +403,12 @@ const DayColumn = React.memo(({
                 // iOS Safari can "stop painting" long overflow lists when the scroll container
                 // (or its ancestors) are promoted to their own compositing layer.
                 // Use containment/isolation instead of transform on the scroll container.
-                contain: 'layout paint' as any,
-                isolation: 'isolate' as any,
+                contain: IS_IOS ? undefined : ('layout paint' as any),
+                isolation: IS_IOS ? undefined : ('isolate' as any),
             }}
         >
             <div 
-                className="w-full relative"
+                className="w-full relative" data-bushi-paint
                 style={{ 
                     // Promote a NON-scroll wrapper instead (more stable on iOS than promoting the scroll container)
                     WebkitTransform: 'translate3d(0,0,0)',
@@ -687,7 +687,28 @@ function BarberCalendarCore() {
   // for the slot list (and the day swipe strip) on iOS is the most reliable fix.
 
 
-  // ===========================================================================
+  // Force iOS to repaint the current day list (visual-only blank/half-render bug)
+  const forcePaintKick = useCallback(() => {
+    if (!IS_IOS) return;
+    const currentCol = document.getElementById('bushi-day-content') as HTMLDivElement | null;
+    const inner = (currentCol?.querySelector('[data-bushi-paint]') as HTMLElement | null) ?? null;
+    const target = inner || currentCol;
+    if (!target) return;
+
+    const prev = target.style.opacity;
+    target.style.opacity = '0.9999';
+    // force layout
+    // eslint-disable-next-line @typescript-eslint/no-unused-expressions
+    (target as any).offsetHeight;
+
+    requestAnimationFrame(() => {
+      target.style.opacity = prev || '';
+      // eslint-disable-next-line @typescript-eslint/no-unused-expressions
+      (target as any).offsetHeight;
+    });
+  }, []);
+
+// ===========================================================================
   // NATIVE SCROLL SNAP LOGIC (Day Swipe)
   // ===========================================================================
   const dayScrollerRef = useRef<HTMLDivElement>(null);
@@ -772,6 +793,7 @@ function BarberCalendarCore() {
           currentCol.scrollTop = prevTop;
           // Force layout
           currentCol.getBoundingClientRect();
+          forcePaintKick();
           // eslint-disable-next-line @typescript-eslint/no-unused-expressions
           (currentCol as any).offsetHeight;
         }
@@ -827,13 +849,7 @@ function BarberCalendarCore() {
       centerDayScroller('auto');
       requestAnimationFrame(() => {
         // Extra kick right after centering (helps the *first* swipe paint on iOS)
-        const currentCol = document.getElementById('bushi-day-content') as HTMLDivElement | null;
-        if (currentCol) {
-          const prevTop = currentCol.scrollTop;
-          currentCol.scrollTop = prevTop + 1;
-          currentCol.scrollTop = prevTop;
-          currentCol.getBoundingClientRect();
-        }
+        forcePaintKick();
         isShiftingRef.current = false;
       });
     });
