@@ -682,10 +682,13 @@ function BarberCalendarCore() {
   const SNAP_EASE = 'cubic-bezier(0.25, 0.9, 0.25, 1)';
   const [panelStyle, setPanelStyle] = useState<React.CSSProperties>({});
 
-  // iOS-only day swipe track (translateX). We keep the old scroll-snap for Android/desktop.
+  // iOS-only day swipe track (translateX). We keep scroll-snap for Android/desktop.
   const dayHostRefIOS = useRef<HTMLDivElement>(null);
   const dayWRefIOS = useRef<number>(0);
-  const [dayTrackStyleIOS, setDayTrackStyleIOS] = useState<React.CSSProperties>({ transform: 'translate3d(-100%,0,0)' });
+  const [dayTrackStyleIOS, setDayTrackStyleIOS] = useState<React.CSSProperties>({
+    transform: 'translate3d(-100%,0,0)',
+    transition: 'none',
+  });
 
   const iosSwipeRef = useRef({
     active: false,
@@ -709,7 +712,6 @@ function BarberCalendarCore() {
     if (!w) return;
     setDayTrackStyleIOS({ transform: `translate3d(${-w}px,0,0)`, transition: 'none' });
   }, [measureIOSDayWidth]);
-
 
 
   // iOS Safari compositor workaround: long nested overflow lists can "stop painting"
@@ -738,7 +740,9 @@ function BarberCalendarCore() {
     });
   }, []);
 
-// iOS-only pointer swipe handlers (translate track). This avoids WebKit "partial paint" bugs.
+// ===========================================================================
+  // iOS NUCLEAR FIX: translateX swipe track (avoids WebKit partial-paint bug)
+  // ===========================================================================
   const IOS_SWIPE_THRESHOLD = 70;
   const IOS_SWIPE_CLAMP = 260;
 
@@ -747,16 +751,17 @@ function BarberCalendarCore() {
       const w = dayWRefIOS.current || measureIOSDayWidth();
       if (!w) return;
 
-      // Animate to prev(0) or next(-2w)
+      // Animate to prev (0) or next (-2w). We are centered at -w.
       const targetX = delta > 0 ? -2 * w : 0;
       setDayTrackStyleIOS({ transform: `translate3d(${targetX}px,0,0)`, transition: `transform 170ms ${SNAP_EASE}` });
 
       window.setTimeout(() => {
         shiftSelectedDay(delta);
+
+        // Reset instantly to center after state updates
         requestAnimationFrame(() => {
           const w2 = dayWRefIOS.current || measureIOSDayWidth() || w;
           dayWRefIOS.current = w2;
-          // Reset instantly to center
           setDayTrackStyleIOS({ transform: `translate3d(${-w2}px,0,0)`, transition: 'none' });
         });
       }, 170);
@@ -781,7 +786,6 @@ function BarberCalendarCore() {
       (e.currentTarget as any).setPointerCapture?.(e.pointerId);
     } catch {}
 
-    // Ensure we start from center with no transition
     resetIOSTrack();
   };
 
@@ -800,7 +804,7 @@ function BarberCalendarCore() {
       if (Math.abs(dx) > 12 && Math.abs(dx) > Math.abs(dy) * 1.15) {
         iosSwipeRef.current.mode = 'horizontal';
       } else {
-        return; // let vertical scroll happen
+        return; // allow vertical scrolling
       }
     }
 
@@ -810,7 +814,6 @@ function BarberCalendarCore() {
 
       const clampPx = Math.min(IOS_SWIPE_CLAMP, Math.round(w * 0.45));
       const clamped = clamp(dx, -clampPx, clampPx);
-
       setDayTrackStyleIOS({ transform: `translate3d(${-w + clamped}px,0,0)`, transition: 'none' });
     }
   };
@@ -835,7 +838,7 @@ function BarberCalendarCore() {
         // dx < 0 => next day, dx > 0 => prev day
         commitIOSSwipe(dx < 0 ? +1 : -1);
       } else {
-        // snap back
+        // snap back to center
         setDayTrackStyleIOS({ transform: `translate3d(${-w}px,0,0)`, transition: `transform 170ms ${SNAP_EASE}` });
       }
     }
@@ -976,10 +979,7 @@ function BarberCalendarCore() {
 
   useLayoutEffect(() => {
     if (!selectedDate) return;
-    // iOS translate track reset
-    if (IS_IOS) {
-      requestAnimationFrame(() => resetIOSTrack());
-    }
+    if (IS_IOS) requestAnimationFrame(() => resetIOSTrack());
     clearScrollEndTimer();
     
     requestAnimationFrame(() => {
@@ -1001,15 +1001,11 @@ function BarberCalendarCore() {
   useEffect(() => () => clearArmedTimeout(), [clearArmedTimeout]);
 
   const animateCloseDown = () => {
-    setPanelStyle(
-      IS_IOS
-        ? { opacity: 0, transition: `opacity 160ms ${SNAP_EASE}` }
-        : {
-            transform: 'translateY(160px)',
-            opacity: 0,
-            transition: `transform 170ms ${SNAP_EASE}, opacity 150ms ${SNAP_EASE}`,
-          },
-    );
+    setPanelStyle({
+      transform: 'translateY(160px)',
+      opacity: 0,
+      transition: `transform 170ms ${SNAP_EASE}, opacity 150ms ${SNAP_EASE}`,
+    });
     setTimeout(() => {
       setSelectedDate(null);
       setPanelStyle({});
@@ -1604,7 +1600,7 @@ function BarberCalendarCore() {
               <div className="w-10 md:w-12" />
             </div>
 
-            {/* iOS: translateX track (no horizontal scroll) */}
+            {/* iOS: translateX day swipe track (nuclear WebKit paint fix) */}
             {IS_IOS ? (
               <div
                 ref={dayHostRefIOS}
@@ -1628,6 +1624,7 @@ function BarberCalendarCore() {
                 </div>
               </div>
             ) : (
+              <>
 {/* Native Scroll Snap Container - FIX V6 */}
             <div className="flex-1 w-full min-h-0">
               <div
@@ -1646,7 +1643,9 @@ function BarberCalendarCore() {
                   <DayColumn {...getDayProps(selectedDate, true)} />
                   <DayColumn {...getDayProps(addDays(selectedDate, 1), false)} />
                </div>
-            )}            </div>
+            </div>
+              </>
+            )}
           </div>
         </div>
       )}
