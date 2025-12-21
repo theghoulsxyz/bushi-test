@@ -268,13 +268,13 @@ const SlotRow = React.memo(
         style={isHighlighted ? { animation: 'bushiPulse 220ms ease-in-out infinite alternate' } : undefined}
       >
         <div
-          className="text-[1.02rem] md:text-[1.15rem] font-semibold tabular-nums min-w-[4.4rem] sm:min-w-[4.9rem] text-center select-none"
+          className="text-[1.05rem] md:text-[1.15rem] font-semibold tabular-nums min-w-[4.9rem] text-center select-none"
           style={{ fontFamily: BRAND.fontBody }}
         >
           {time}
         </div>
 
-        <div className="flex-1 min-w-0 flex items-center justify-center gap-2">
+        <div className="flex-1 min-w-0 flex items-center gap-2">
           <input
             id={inputId}
             key={timeKey + value}
@@ -305,7 +305,7 @@ const SlotRow = React.memo(
               el.dataset.orig = el.value;
               onSave(dayISO, time, el.value);
             }}
-            className="block w-full max-w-[520px] text-white bg-[rgb(10,10,10)] border border-neutral-700/70 focus:border-white/70 focus:outline-none focus:ring-0 rounded-lg px-3 py-1.5 text-center transition-all duration-200"
+            className="block w-full lg:max-w-[560px] lg:mx-auto text-white bg-[rgb(10,10,10)] border border-neutral-700/70 focus:border-white/70 focus:outline-none focus:ring-0 rounded-lg px-3 py-1.5 text-center transition-all duration-200"
             style={{ fontFamily: BRAND.fontBody }}
           />
 
@@ -387,7 +387,7 @@ const DayColumn = React.memo(({
         <div
             id={isCurrent ? 'bushi-day-content' : undefined}
             ref={dayContentRef}
-            className="w-full h-full flex-shrink-0 snap-center overflow-y-auto px-[max(10px,env(safe-area-inset-left))] pr-[max(10px,env(safe-area-inset-right))]"
+            className="w-full h-full flex-shrink-0 snap-center overflow-y-auto"
             style={{
                 WebkitOverflowScrolling: 'touch',
                 overscrollBehaviorY: 'contain' as any,
@@ -408,7 +408,7 @@ const DayColumn = React.memo(({
                 }}
             >
                 <div
-                    className="mx-auto w-full max-w-[980px] grid grid-cols-1 sm:grid-cols-2 gap-2.5 px-2 sm:px-3"
+                    className="w-full grid grid-cols-1 sm:grid-cols-2 gap-2.5 px-2 sm:px-2 lg:px-0 lg:max-w-[980px] lg:mx-auto"
                     style={{ gridAutoRows: 'min-content' }}
                 >
                     {DAY_SLOTS.map((time) => {
