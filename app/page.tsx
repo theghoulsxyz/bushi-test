@@ -1,8 +1,9 @@
 'use client';
 // Bushi Admin — Month grid + Day editor (Native Scroll Snap Fix)
-// FIX V6: Extracted DayColumn to a Memoized Component to fix "White Screen" crash.
+// FIX V6: Extracted DayColumn to a Memoized Component.
 // FIX V7: Added translateZ(0) to fix iOS "cut off" rendering bug.
-// FIX V8: Removed 'touch-action: pan-y' to restore Horizontal Swipe (Left/Right) between days.
+// FIX V8: Removed 'touch-action: pan-y' to restore Horizontal Swipe.
+// FIX V9: Added "Double Layer Promotion" (translateZ on inner div) + minHeight% to force iOS Paint.
 
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
@@ -349,8 +350,9 @@ const SlotRow = React.memo(
 );
 
 // FIX V6: Extracted DayColumn Component
-// FIX V7: Added translateZ(0) to fix iOS "cut off" bug
+// FIX V7: Added translateZ(0) to fix iOS "cut off" bug (on outer)
 // FIX V8: Removed 'touch-action: pan-y' to restore Swipe
+// FIX V9: Added translateZ(0) to INNER div + minHeight to force paint
 const DayColumn = React.memo(({ 
     date, 
     isCurrent, 
@@ -391,13 +393,20 @@ const DayColumn = React.memo(({
                 overscrollBehaviorY: 'contain' as any,
                 overflowAnchor: 'none' as any,
                 paddingBottom: `${bottomPad}px`,
-                // FIX FOR IPHONE CLIPPING: Force GPU layer
+                // OUTER LAYER PROMOTION
                 transform: 'translateZ(0)',
                 backfaceVisibility: 'hidden',
-                // Removed 'touchAction: pan-y' here so you can swipe days horizontally again!
             }}
         >
-            <div className="w-full relative min-h-full">
+            <div 
+                className="w-full relative"
+                style={{ 
+                    // INNER LAYER PROMOTION (Critical for "Ghost Content" fix)
+                    transform: 'translateZ(0)',
+                    // Force iOS to acknowledge this is taller than viewport
+                    minHeight: '100.5%' 
+                }}
+            >
                 <div
                     className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 px-0.5"
                     style={{ gridAutoRows: 'min-content' }}
@@ -439,7 +448,6 @@ const DayColumn = React.memo(({
         </div>
     );
 }, (prev, next) => {
-    // Custom comparison for performance
     return (
         prev.iso === next.iso &&
         prev.isCurrent === next.isCurrent &&
