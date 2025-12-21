@@ -387,15 +387,17 @@ const DayColumn = React.memo(({
         <div
             id={isCurrent ? 'bushi-day-content' : undefined}
             ref={dayContentRef}
-            className="w-full h-full flex-shrink-0 snap-center overflow-y-auto"
+            className="w-full h-full min-h-0 overflow-y-auto"
             style={{
                 WebkitOverflowScrolling: 'touch',
                 overscrollBehaviorY: 'contain' as any,
                 overflowAnchor: 'none' as any,
                 paddingBottom: `${bottomPad}px`,
-                // OUTER LAYER PROMOTION
-                transform: 'translateZ(0)',
-                backfaceVisibility: 'hidden',
+                // iOS Safari can "stop painting" long overflow lists when the scroll container
+                // (or its ancestors) are promoted to their own compositing layer.
+                // Use containment/isolation instead of transform on the scroll container.
+                contain: 'layout paint' as any,
+                isolation: 'isolate' as any,
             }}
         >
             <div 
@@ -1201,7 +1203,7 @@ function BarberCalendarCore() {
 
   return (
     <div
-      className="fixed inset-0 w-full h-dvh bg-black text-white overflow-hidden"
+      className="fixed inset-0 w-full h-[100dvh] bg-black text-white overflow-hidden"
       onClickCapture={(e) => {
         if (!swallowNextClickRef.current) return;
         e.preventDefault();
@@ -1210,11 +1212,11 @@ function BarberCalendarCore() {
     >
       <div className="max-w-screen-2xl mx-auto px-[clamp(12px,2.5vw,40px)] pt-[clamp(12px,2.5vw,40px)] pb-[clamp(8px,2vw,24px)] h-full flex flex-col select-none">
         
-        <div className="flex flex-col md:flex-row items-center justify-center md:justify-between gap-1 md:gap-6">
+        <div className="flex flex-col md:flex-row items-center justify-center md:justify-between gap-2 md:gap-6">
           <img
             src={BRAND.logoLight}
             alt="logo"
-            className="w-64 h-auto md:w-auto md:h-[22rem] object-contain cursor-pointer"
+            className="w-auto h-[clamp(72px,10vh,140px)] sm:h-[clamp(80px,10vh,160px)] md:h-[clamp(120px,14vh,220px)] object-contain cursor-pointer"
             onClick={() => {
               const now = new Date();
               setViewYear(now.getFullYear());
