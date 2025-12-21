@@ -358,7 +358,6 @@ const DayColumn = React.memo(({
     isCurrent, 
     dayData, 
     keyboardInset,
-    paintTick,
     remoteReady,
     savedPulse,
     armedRemove,
@@ -381,17 +380,6 @@ const DayColumn = React.memo(({
         }
     }, [isCurrent]);
 
-    // Extra iOS repaint nudge: touching scrollTop + reflow forces Safari to redraw
-    useLayoutEffect(() => {
-        if (!isCurrent) return;
-        const el = dayContentRef.current;
-        if (!el) return;
-        // Re-assert scrollTop (even if 0) and force a reflow
-        el.scrollTop = el.scrollTop;
-        // eslint-disable-next-line @typescript-eslint/no-unused-expressions
-        (el as any).offsetHeight;
-    }, [isCurrent, paintTick]);
-
     // 35px padding + keyboard inset
     const bottomPad = 35 + keyboardInset;
 
@@ -399,9 +387,9 @@ const DayColumn = React.memo(({
         <div
             id={isCurrent ? 'bushi-day-content' : undefined}
             ref={dayContentRef}
-            className="w-full h-full flex-shrink-0 overflow-y-auto"
+            className="w-full h-full flex-shrink-0 snap-center overflow-y-auto"
             style={{
-                WebkitOverflowScrolling: 'touch',
+                WebkitOverflowScrolling: IS_IOS ? 'auto' : 'touch',
                 overscrollBehaviorY: 'contain' as any,
                 overflowAnchor: 'none' as any,
                 paddingBottom: `${bottomPad}px`,
@@ -416,11 +404,9 @@ const DayColumn = React.memo(({
                 className="w-full relative"
                 style={{ 
                     // Promote a NON-scroll wrapper instead (more stable on iOS than promoting the scroll container)
-                    WebkitTransform: isCurrent ? (paintTick % 2 ? 'translate3d(0,0,0) scale(1.00001)' : 'translate3d(0,0,0) scale(1)') : 'translate3d(0,0,0)',
-                    transform: isCurrent ? (paintTick % 2 ? 'translate3d(0,0,0) scale(1.00001)' : 'translate3d(0,0,0) scale(1)') : 'translate3d(0,0,0)',
+                    WebkitTransform: 'translate3d(0,0,0)',
+                    transform: 'translate3d(0,0,0)',
                     willChange: 'transform',
-                    minHeight: '100%',
-                    backfaceVisibility: 'hidden',
                 }}
             >
                 <div
@@ -689,8 +675,17 @@ function BarberCalendarCore() {
   const SNAP_EASE = 'cubic-bezier(0.25, 0.9, 0.25, 1)';
   const [panelStyle, setPanelStyle] = useState<React.CSSProperties>({});
 
-  // iOS paint nudge (forces Safari to redraw long slot lists after fast day swipes)
-  const [paintTick, setPaintTick] = useState(0);
+  // iOS Safari compositor workaround: long nested overflow lists can "stop painting"
+  // when momentum scrolling + scroll-snap are involved. Disabling momentum scrolling
+  // for the slot list (and the day swipe strip) on iOS is the most reliable fix.
+  const IS_IOS = useMemo(() => {
+    if (typeof navigator === 'undefined') return false;
+    const ua = navigator.userAgent || '';
+    const iDevice = /iPad|iPhone|iPod/.test(ua);
+    const iPadOS13Plus = navigator.platform === 'MacIntel' && (navigator as any).maxTouchPoints > 1;
+    return iDevice || iPadOS13Plus;
+  }, []);
+
 
   // ===========================================================================
   // NATIVE SCROLL SNAP LOGIC (Day Swipe)
@@ -760,9 +755,6 @@ function BarberCalendarCore() {
 
       shiftSelectedDay(delta);
 
-      // Force a tiny style nudge so iOS Safari repaints the long slot list
-      setPaintTick((t) => t + 1);
-
       // iOS Safari sometimes visually "clips" long overflow content after fast snap swipes.
       // Force a repaint/reflow cycle once the day changes.
       requestAnimationFrame(() => {
@@ -774,7 +766,12 @@ function BarberCalendarCore() {
         const currentCol = document.getElementById('bushi-day-content') as HTMLDivElement | null;
         if (currentCol) {
           // Re-assert scrollTop (even if already 0) to trigger paint
-          currentCol.scrollTop = currentCol.scrollTop;
+          // Hard paint kick: tiny scrollTop jiggle forces iOS to redraw rows
+          const prevTop = currentCol.scrollTop;
+          currentCol.scrollTop = prevTop + 1;
+          currentCol.scrollTop = prevTop;
+          // Force layout
+          currentCol.getBoundingClientRect();
           // eslint-disable-next-line @typescript-eslint/no-unused-expressions
           (currentCol as any).offsetHeight;
         }
@@ -829,6 +826,14 @@ function BarberCalendarCore() {
     requestAnimationFrame(() => {
       centerDayScroller('auto');
       requestAnimationFrame(() => {
+        // Extra kick right after centering (helps the *first* swipe paint on iOS)
+        const currentCol = document.getElementById('bushi-day-content') as HTMLDivElement | null;
+        if (currentCol) {
+          const prevTop = currentCol.scrollTop;
+          currentCol.scrollTop = prevTop + 1;
+          currentCol.scrollTop = prevTop;
+          currentCol.getBoundingClientRect();
+        }
         isShiftingRef.current = false;
       });
     });
@@ -1168,7 +1173,6 @@ function BarberCalendarCore() {
         savedPulse,
         armedRemove,
         highlight,
-        paintTick,
         startEditing,
         stopEditing,
         saveName,
@@ -1176,7 +1180,7 @@ function BarberCalendarCore() {
         confirmRemove,
         revealFocus
     };
-  }, [store, keyboardInset, paintTick, remoteReady, savedPulse, armedRemove, highlight, startEditing, stopEditing, saveName, armRemove, confirmRemove, revealFocus]);
+  }, [store, keyboardInset, remoteReady, savedPulse, armedRemove, highlight, startEditing, stopEditing, saveName, armRemove, confirmRemove, revealFocus]);
 
   return (
     <div
@@ -1450,8 +1454,10 @@ function BarberCalendarCore() {
                  onScroll={onDayScroll}
                  className="w-full h-full flex overflow-x-auto snap-x snap-mandatory no-scrollbar"
                  style={{
-                   WebkitOverflowScrolling: 'touch',
+                   WebkitOverflowScrolling: IS_IOS ? 'auto' : 'touch',
                    overscrollBehaviorX: 'contain' as any,
+                   // Helps iOS Safari repaint long scrollable content after fast snap swipes
+                   WebkitTransform: 'translate3d(0,0,0)',
                  }}
               >
                   {/* We use the extracted component <DayColumn /> here */}
