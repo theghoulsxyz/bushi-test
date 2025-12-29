@@ -63,52 +63,7 @@ function injectBushiStyles() {
       -ms-overflow-style: none;
       scrollbar-width: none;
     }
-  
-/* Landscape (short height) tightening */
-@media (orientation: landscape) and (max-height: 520px) {
-  .bushi-tight-landscape { gap: 0.5rem !important; }
-  .bushi-tight-landscape h1, .bushi-tight-landscape h2, .bushi-tight-landscape h3 { line-height: 1.05 !important; }
-  .bushi-day-modal-panel { padding: 0.75rem !important; }
-  .bushi-day-modal-header { margin-bottom: 0.5rem !important; }
-}
-
-/* Slot grid responsive columns (phone -> 2 cols, tablet -> 3/4 cols) */
-.bushi-slot-grid {
-  display: grid;
-  grid-template-columns: repeat(1, minmax(0, 1fr));
-}
-/* Most modern phones (e.g., iPhone Pro Max portrait) can handle 2 columns */
-@media (min-width: 430px) {
-  .bushi-slot-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-/* Tablets: more columns so the full day fits without vertical scrolling */
-@media (min-width: 768px) and (min-height: 600px) {
-  .bushi-slot-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-  .bushi-slot-row {
-    padding-top: 0.25rem !important;
-    padding-bottom: 0.25rem !important;
-  }
-  .bushi-slot-time {
-    font-size: 0.95rem !important;
-    min-width: 4.4rem !important;
-  }
-  .bushi-slot-input {
-    padding-top: 0.35rem !important;
-    padding-bottom: 0.35rem !important;
-    font-size: 0.95rem !important;
-  }
-}
-/* Large tablets / desktop */
-@media (min-width: 1024px) and (min-height: 700px) {
-  .bushi-slot-grid {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-  }
-}
-`;
+  `;
   document.head.appendChild(style);
 }
 
@@ -320,7 +275,7 @@ const SlotRow = React.memo(
         style={isHighlighted ? { animation: 'bushiPulse 220ms ease-in-out infinite alternate' } : undefined}
       >
         <div
-          className="text-[1.05rem] md:text-[1.15rem] font-semibold tabular-nums min-w-[4.9rem] text-center select-none bushi-slot-time"
+          className="text-[1.05rem] md:text-[1.15rem] font-semibold tabular-nums min-w-[4.9rem] text-center select-none"
           style={{ fontFamily: BRAND.fontBody }}
         >
           {time}
@@ -357,7 +312,7 @@ const SlotRow = React.memo(
               el.dataset.orig = el.value;
               onSave(dayISO, time, el.value);
             }}
-            className="block w-full text-white bg-[rgb(10,10,10)] border border-neutral-700/70 focus:border-white/70 focus:outline-none focus:ring-0 rounded-lg px-3 py-1.5 text-center transition-all duration-200 bushi-slot-input"
+            className="block w-full text-white bg-[rgb(10,10,10)] border border-neutral-700/70 focus:border-white/70 focus:outline-none focus:ring-0 rounded-lg px-3 py-1.5 text-center transition-all duration-200"
             style={{ fontFamily: BRAND.fontBody }}
           />
 
@@ -463,7 +418,7 @@ const DayColumn = React.memo(({
                 }}
             >
                 <div
-                    className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 px-0.5" bushi-slot-grid
+                    className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 px-0.5"
                     style={{ gridAutoRows: 'min-content' }}
                 >
                     {DAY_SLOTS.map((time) => {
@@ -1500,13 +1455,13 @@ function BarberCalendarCore() {
         e.stopPropagation();
       }}
     >
-      <div className="max-w-screen-2xl mx-auto h-full flex flex-col select-none" style={{ paddingLeft: 'max(clamp(12px,2.5vw,40px), env(safe-area-inset-left))', paddingRight: 'max(clamp(12px,2.5vw,40px), env(safe-area-inset-right))', paddingTop: 'max(clamp(12px,2.5vw,40px), env(safe-area-inset-top))', paddingBottom: 'max(clamp(8px,2vw,24px), env(safe-area-inset-bottom))' }}>
+      <div className="max-w-screen-2xl mx-auto px-[clamp(12px,2.5vw,40px)] pt-[clamp(12px,2.5vw,40px)] pb-[clamp(8px,2vw,24px)] h-full flex flex-col select-none">
         
-        <div className="flex flex-col md:flex-row items-center justify-center md:justify-between gap-1 md:gap-6 bushi-tight-landscape">
+        <div className="flex flex-col md:flex-row items-center justify-center md:justify-between gap-1 md:gap-6">
           <img
             src={BRAND.logoLight}
             alt="logo"
-            className="w-64 h-auto md:w-auto md:h-[min(22rem,42dvh)] object-contain cursor-pointer"
+            className="w-64 h-auto md:w-auto md:h-[22rem] object-contain cursor-pointer"
             onClick={() => {
               const now = new Date();
               setViewYear(now.getFullYear());
@@ -1720,7 +1675,7 @@ function BarberCalendarCore() {
           }
           setShowYear(false);
         }}>
-          <div className="w-[min(96vw,900px)] max-w-2xl max-h-[92dvh] overflow-hidden rounded-3xl border border-neutral-800 bg-neutral-950/95 shadow-2xl px-6 py-6 sm:px-8 sm:py-8" style={{ ...yearStyle, touchAction: 'pan-y' as any }}
+          <div className="w-[min(100%-32px,820px)] max-w-xl rounded-3xl border border-neutral-800 bg-neutral-950/95 shadow-2xl px-6 py-6 sm:px-8 sm:py-8" style={{ ...yearStyle, touchAction: 'pan-y' as any }}
             onTouchStart={onYearTouchStart}
             onTouchMove={onYearTouchMove}
             onTouchEnd={onYearTouchEnd}
@@ -1760,14 +1715,14 @@ function BarberCalendarCore() {
       {selectedDate && selectedDayISO && (
         <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/80" onMouseDown={() => setSelectedDate(null)}>
           <div
-            className="max-w-6xl w-[min(96vw,1100px)] h-[min(92dvh,860px)] bushi-day-modal-panel rounded-2xl border border-neutral-700 bg-[rgb(10,10,10)] p-4 md:p-6 shadow-2xl overflow-hidden flex flex-col"
+            className="max-w-6xl w-[94vw] md:w-[1100px] h-[90vh] rounded-2xl border border-neutral-700 bg-[rgb(10,10,10)] p-4 md:p-6 shadow-2xl overflow-hidden flex flex-col"
             style={panelStyle}
             onMouseDown={(e) => e.stopPropagation()}
             onTouchStart={(e) => e.stopPropagation()}
           >
             {/* Header */}
             <div
-              className="flex-shrink-0 flex items-center justify-between cursor-pointer mb-4 bushi-day-modal-header"
+              className="flex-shrink-0 flex items-center justify-between cursor-pointer mb-4"
               onClick={animateCloseDown}
               title="Tap to close"
             >
