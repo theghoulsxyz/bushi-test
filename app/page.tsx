@@ -400,6 +400,7 @@ const DayColumn = React.memo(
     confirmRemove,
     revealFocus,
   }: any) => {
+    const iso = toISODate(date);
     const dayContentRef = useRef<HTMLDivElement>(null);
 
     // Auto-scroll to top only when this column becomes current
@@ -1645,7 +1646,6 @@ const cancelledSyncRef = useRef(false);
       const iso = toISODate(date);
       return {
         key: iso, // STABLE KEY is crucial
-        iso,
         date,
         isCurrent,
         dayData: store[iso], // Pass only specific data, not whole store
