@@ -11,7 +11,9 @@ const SUPABASE_URL = process.env.SUPABASE_URL!;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
 if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
-  throw new Error("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY environment variables");
+  throw new Error(
+    "Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY environment variables"
+  );
 }
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
@@ -32,19 +34,16 @@ const jsonNoStore = (data: any, status = 200) =>
 // -----------------------------------------------------------------------------
 // GET  /api/appointments
 // Returns full calendar as: { "2025-12-01": { "08:00": "Name", ... }, ... }
-// IMPORTANT FIX: on Supabase error, return 500 (NOT {} with 200), otherwise
-// the client will overwrite its store with an empty object and look like "deleting".
 // -----------------------------------------------------------------------------
 export async function GET() {
   try {
-    const { data, error } = await supabase.from("appointments").select("day,time,name");
+    const { data, error } = await supabase
+      .from("appointments")
+      .select("day,time,name");
 
     if (error) {
       console.error("GET /api/appointments error:", error);
-      return jsonNoStore(
-        { ok: false, error: "Failed to load appointments" },
-        500
-      );
+      return jsonNoStore({ error: "Failed to fetch appointments" }, 500);
     }
 
     const store: Store = {};
@@ -58,10 +57,10 @@ export async function GET() {
       store[day][time] = name || "";
     });
 
-    return jsonNoStore({ ok: true, store }, 200);
+    return jsonNoStore(store, 200);
   } catch (e) {
     console.error("GET /api/appointments exception:", e);
-    return jsonNoStore({ ok: false, error: "Server exception" }, 500);
+    return jsonNoStore({ error: "Exception while fetching appointments" }, 500);
   }
 }
 
@@ -76,7 +75,7 @@ export async function PATCH(req: NextRequest) {
     const body = await req.json().catch(() => null);
 
     if (!body || typeof body !== "object") {
-      return jsonNoStore({ ok: false, error: "Invalid payload" }, 400);
+      return jsonNoStore({ error: "Invalid payload" }, 400);
     }
 
     const op = (body as any).op as string;
@@ -85,11 +84,11 @@ export async function PATCH(req: NextRequest) {
     const nameRaw = (body as any).name as string | undefined;
 
     if (!op || !day || !time) {
-      return jsonNoStore({ ok: false, error: "Missing op/day/time" }, 400);
+      return jsonNoStore({ error: "Missing op/day/time" }, 400);
     }
 
     if (!DAY_RE.test(day) || !TIME_RE.test(time)) {
-      return jsonNoStore({ ok: false, error: "Invalid day/time format" }, 400);
+      return jsonNoStore({ error: "Invalid day/time format" }, 400);
     }
 
     if (op === "clear") {
@@ -101,7 +100,7 @@ export async function PATCH(req: NextRequest) {
 
       if (delErr) {
         console.error("PATCH clear error:", delErr);
-        return jsonNoStore({ ok: false, error: "Failed to clear slot" }, 500);
+        return jsonNoStore({ error: "Failed to clear slot" }, 500);
       }
 
       return jsonNoStore({ ok: true }, 200);
@@ -120,19 +119,22 @@ export async function PATCH(req: NextRequest) {
 
         if (delErr) {
           console.error("PATCH set->clear error:", delErr);
-          return jsonNoStore({ ok: false, error: "Failed to clear slot" }, 500);
+          return jsonNoStore({ error: "Failed to clear slot" }, 500);
         }
 
         return jsonNoStore({ ok: true }, 200);
       }
 
-      // Requires unique index on (day,time)
+      // Requires unique index on (day,time) (you already created it)
       const { error: upsertErr } = await supabase
         .from("appointments")
         .upsert([{ day, time, name }], { onConflict: "day,time" });
 
       if (upsertErr) {
-        console.warn("PATCH set upsert failed, falling back to delete+insert:", upsertErr);
+        console.warn(
+          "PATCH set upsert failed, falling back to delete+insert:",
+          upsertErr
+        );
 
         const { error: delErr } = await supabase
           .from("appointments")
@@ -142,7 +144,10 @@ export async function PATCH(req: NextRequest) {
 
         if (delErr) {
           console.error("PATCH set fallback delete error:", delErr);
-          return jsonNoStore({ ok: false, error: "Failed to set slot (fallback delete)" }, 500);
+          return jsonNoStore(
+            { error: "Failed to set slot (fallback delete)" },
+            500
+          );
         }
 
         const { error: insErr } = await supabase
@@ -151,38 +156,48 @@ export async function PATCH(req: NextRequest) {
 
         if (insErr) {
           console.error("PATCH set fallback insert error:", insErr);
-          return jsonNoStore({ ok: false, error: "Failed to set slot (fallback insert)" }, 500);
+          return jsonNoStore(
+            { error: "Failed to set slot (fallback insert)" },
+            500
+          );
         }
       }
 
       return jsonNoStore({ ok: true }, 200);
     }
 
-    return jsonNoStore({ ok: false, error: "Unknown op" }, 400);
+    return jsonNoStore({ error: "Unknown op" }, 400);
   } catch (e) {
     console.error("PATCH /api/appointments exception:", e);
-    return jsonNoStore({ ok: false, error: "Exception while patching" }, 500);
+    return jsonNoStore({ error: "Exception while patching" }, 500);
   }
 }
 
 // -----------------------------------------------------------------------------
 // POST /api/appointments  (DANGEROUS BULK OVERWRITE)
-// Still protected.
+// NOW PROTECTED so OLD CLIENTS CAN'T WIPE THE TABLE.
+// Required body:
+//   { _dangerouslyOverwriteAll: true, store: { ...fullStore } }
 // -----------------------------------------------------------------------------
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => null);
 
     if (!body || typeof body !== "object") {
-      return jsonNoStore({ ok: false, error: "Invalid payload" }, 400);
+      return jsonNoStore({ error: "Invalid payload" }, 400);
     }
 
     const allow = (body as any)._dangerouslyOverwriteAll === true;
     const store = (body as any).store as Store | undefined;
 
+    // IMPORTANT: This blocks your OLD app versions from wiping data,
+    // because they used to POST the store directly (without this flag).
     if (!allow || !store || typeof store !== "object") {
       return jsonNoStore(
-        { ok: false, error: "Bulk overwrite is disabled. Use PATCH for single-slot updates." },
+        {
+          error:
+            "Bulk overwrite is disabled. Use PATCH for single-slot updates.",
+        },
         400
       );
     }
@@ -202,6 +217,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // Delete ALL rows. Use day IS NOT NULL (safer than relying on an "id" column).
     const { error: delError } = await supabase
       .from("appointments")
       .delete()
@@ -209,21 +225,26 @@ export async function POST(req: NextRequest) {
 
     if (delError) {
       console.error("POST /api/appointments delete error:", delError);
-      return jsonNoStore({ ok: false, error: "Failed to clear existing appointments" }, 500);
+      return jsonNoStore(
+        { error: "Failed to clear existing appointments" },
+        500
+      );
     }
 
     if (rows.length > 0) {
-      const { error: insError } = await supabase.from("appointments").insert(rows);
+      const { error: insError } = await supabase
+        .from("appointments")
+        .insert(rows);
 
       if (insError) {
         console.error("POST /api/appointments insert error:", insError);
-        return jsonNoStore({ ok: false, error: "Failed to save appointments" }, 500);
+        return jsonNoStore({ error: "Failed to save appointments" }, 500);
       }
     }
 
     return jsonNoStore({ ok: true }, 200);
   } catch (e) {
     console.error("POST /api/appointments exception:", e);
-    return jsonNoStore({ ok: false, error: "Exception while saving" }, 500);
+    return jsonNoStore({ error: "Exception while saving" }, 500);
   }
 }
