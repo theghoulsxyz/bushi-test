@@ -37,9 +37,13 @@ const jsonNoStore = (data: any, status = 200) =>
 // -----------------------------------------------------------------------------
 export async function GET() {
   try {
+    // NOTE:
+    // - We order by id so if legacy duplicates exist, the newest row wins deterministically.
+    // - We NEVER allow an empty name to overwrite a non-empty name (prevents "blank row" wiping UI).
     const { data, error } = await supabase
       .from("appointments")
-      .select("day,time,name");
+      .select("id,day,time,name")
+      .order("id", { ascending: true });
 
     if (error) {
       console.error("GET /api/appointments error:", error);
@@ -48,13 +52,20 @@ export async function GET() {
 
     const store: Store = {};
     (data || []).forEach((row: any) => {
-      const day = row.day as string;
-      const time = row.time as string;
-      const name = row.name as string;
+      const day = String(row.day ?? "").trim();
+      const time = String(row.time ?? "").trim();
+      const name = String(row.name ?? "");
 
       if (!day || !time) return;
       if (!store[day]) store[day] = {};
-      store[day][time] = name || "";
+
+      const incoming = (name || "").trim();
+      const existing = (store[day][time] || "").trim();
+
+      // If we already have a name, don't let a blank overwrite it.
+      if (existing.length > 0 && incoming.length === 0) return;
+
+      store[day][time] = incoming;
     });
 
     return jsonNoStore(store, 200);
@@ -63,13 +74,6 @@ export async function GET() {
     return jsonNoStore({}, 200);
   }
 }
-
-// -----------------------------------------------------------------------------
-// PATCH /api/appointments  (SAFE: single-slot operations, no wipe possible)
-// Body examples:
-//  { op: "set", day: "2025-12-01", time: "10:30", name: "Ivan" }
-//  { op: "clear", day: "2025-12-01", time: "10:30" }
-// -----------------------------------------------------------------------------
 export async function PATCH(req: NextRequest) {
   try {
     const body = await req.json().catch(() => null);
