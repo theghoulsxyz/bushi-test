@@ -4,10 +4,8 @@
 // FIX V7: Added translateZ(0) to fix iOS "cut off" rendering bug.
 // FIX V8: Removed 'touch-action: pan-y' to restore Horizontal Swipe.
 // FIX V9: Added "Double Layer Promotion" (translateZ on inner div) + minHeight% to force iOS Paint.
-// FIX V12: Durable Write Queue — prevents server poll/race from wiping saved names; retries PATCH until server confirms.
 
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 
 // =============================================================================
 // Brand / Fonts
@@ -29,6 +27,7 @@ const IS_IOS =
   typeof navigator !== 'undefined' &&
   (/iPad|iPhone|iPod/.test(navigator.userAgent || '') ||
     (navigator.platform === 'MacIntel' && (navigator as any).maxTouchPoints > 1));
+
 
 function injectBrandFonts() {
   if (typeof document === 'undefined') return;
@@ -73,11 +72,14 @@ function injectBushiStyles() {
 // =============================================================================
 const pad = (n: number) => (n < 10 ? `0${n}` : `${n}`);
 
-const toISODate = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const toISODate = (d: Date) =>
+  `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 
-const addDays = (d: Date, delta: number) => new Date(d.getFullYear(), d.getMonth(), d.getDate() + delta);
+const addDays = (d: Date, delta: number) =>
+  new Date(d.getFullYear(), d.getMonth(), d.getDate() + delta);
 
-const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
+const clamp = (v: number, min: number, max: number) =>
+  Math.max(min, Math.min(max, v));
 
 function monthMatrix(year: number, month: number) {
   const first = new Date(year, month, 1);
@@ -110,7 +112,15 @@ const slotInputId = (dayISO: string, time: string) =>
 // Constants
 // =============================================================================
 const WEEKDAYS_SHORT = ['Пон', 'Вто', 'Сря', 'Чет', 'Пет', 'Съб', 'Нед'];
-const WEEKDAYS_FULL = ['Понеделник', 'Вторник', 'Сряда', 'Четвъртък', 'Петък', 'Събота', 'Неделя'];
+const WEEKDAYS_FULL = [
+  'Понеделник',
+  'Вторник',
+  'Сряда',
+  'Четвъртък',
+  'Петък',
+  'Събота',
+  'Неделя',
+];
 const MONTHS = [
   'Януари',
   'Февруари',
@@ -127,7 +137,7 @@ const MONTHS = [
 ];
 
 const START_HOUR = 8;
-const END_HOUR = 22;
+const END_HOUR = 22; 
 const SLOT_MINUTES = 30;
 
 function buildSlots() {
@@ -171,37 +181,21 @@ const API_ENDPOINT = '/api/appointments';
 async function fetchRemoteStore(): Promise<Store | null> {
   if (typeof window === 'undefined') return null;
   try {
-    // cache-buster avoids any weird CDN/browser caching
-    const url = `${API_ENDPOINT}?t=${Date.now()}`;
-    const res = await fetch(url, {
-      method: 'GET',
-      cache: 'no-store',
-      headers: { 'Cache-Control': 'no-store', Pragma: 'no-cache' },
-    });
+    const res = await fetch(API_ENDPOINT, { method: 'GET', cache: 'no-store' });
     if (!res.ok) return null;
-    const data: any = await res.json();
+    const data = await res.json();
     if (!data || typeof data !== 'object') return null;
-
-    // Support both response shapes:
-    //  1) store directly: { "YYYY-MM-DD": { "HH:MM": "Name" } }
-    //  2) wrapped: { ok:true, store:{...} }
-    const maybeStore = (data.store && typeof data.store === 'object') ? data.store : data;
-
-    if (!maybeStore || typeof maybeStore !== 'object') return null;
-    return maybeStore as Store;
+    return data as Store;
   } catch {
     return null;
   }
 }
 
-
 async function patchSetSlot(day: string, time: string, name: string): Promise<boolean> {
   try {
     const res = await fetch(API_ENDPOINT, {
       method: 'PATCH',
-      cache: 'no-store',
-      keepalive: true as any, // helps mobile Safari not cancel the request on fast swipe/blur
-      headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ op: 'set', day, time, name }),
     });
     return res.ok;
@@ -214,9 +208,7 @@ async function patchClearSlot(day: string, time: string): Promise<boolean> {
   try {
     const res = await fetch(API_ENDPOINT, {
       method: 'PATCH',
-      cache: 'no-store',
-      keepalive: true as any,
-      headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ op: 'clear', day, time }),
     });
     return res.ok;
@@ -275,37 +267,6 @@ const SlotRow = React.memo(
     const timeKey = `${dayISO}_${time}`;
     const inputId = slotInputId(dayISO, time);
 
-    // FIX V10: Keep a local draft so typing never "disappears" on iOS.
-    const [draft, setDraft] = useState<string>(value || '');
-    const focusedRef = useRef(false);
-    const draftRef = useRef(draft);
-    const valueRef = useRef(value || '');
-
-    useEffect(() => {
-      draftRef.current = draft;
-    }, [draft]);
-
-    useEffect(() => {
-      valueRef.current = value || '';
-      // Only sync incoming store value when NOT actively editing.
-      if (!focusedRef.current) setDraft(value || '');
-    }, [value]);
-
-    const flushIfChanged = useCallback(() => {
-      if (!canWrite) return;
-      const orig = (valueRef.current || '').trim();
-      const now = (draftRef.current || '').trim();
-      if (orig === now) return;
-      onSave(dayISO, time, draftRef.current || '');
-    }, [canWrite, dayISO, time, onSave]);
-
-    // Save on unmount (covers iOS swipe/day-change where blur may not fire reliably)
-    useEffect(() => {
-      return () => {
-        if (focusedRef.current) flushIfChanged();
-      };
-    }, [flushIfChanged]);
-
     return (
       <div
         className={`relative rounded-2xl bg-neutral-900/80 border px-3 py-1 flex items-center gap-3 overflow-hidden transition ${
@@ -323,12 +284,9 @@ const SlotRow = React.memo(
         <div className="flex-1 min-w-0 flex items-center gap-2">
           <input
             id={inputId}
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            data-dayiso={dayISO}
-            data-time={time}
+            key={timeKey + value}
+            defaultValue={value}
             onFocus={(e) => {
-              focusedRef.current = true;
               e.currentTarget.dataset.orig = e.currentTarget.value;
               onStartEditing();
               onRevealFocus(dayISO, time, e.currentTarget);
@@ -336,12 +294,13 @@ const SlotRow = React.memo(
             onKeyDown={(e) => {
               if (e.key === 'Enter') {
                 const el = e.target as HTMLInputElement;
-                if (canWrite) onSave(dayISO, time, el.value);
+                const v = el.value;
+                el.dataset.orig = v;
+                if (canWrite) onSave(dayISO, time, v);
                 el.blur();
               }
             }}
             onBlur={(e) => {
-              focusedRef.current = false;
               const el = e.currentTarget;
               const orig = (el.dataset.orig ?? '').trim();
               const now = (el.value ?? '').trim();
@@ -401,11 +360,10 @@ const SlotRow = React.memo(
 // FIX V7: Added translateZ(0) to fix iOS "cut off" bug (on outer)
 // FIX V8: Removed 'touch-action: pan-y' to restore Swipe
 // FIX V9: Added translateZ(0) to INNER div + minHeight to force paint
-const DayColumn = React.memo(
-  ({
-    date,
-    isCurrent,
-    dayData,
+const DayColumn = React.memo(({ 
+    date, 
+    isCurrent, 
+    dayData, 
     keyboardInset,
     remoteReady,
     savedPulse,
@@ -417,100 +375,100 @@ const DayColumn = React.memo(
     saveName,
     armRemove,
     confirmRemove,
-    revealFocus,
-  }: any) => {
+    revealFocus
+}: any) => {
     const iso = toISODate(date);
     const dayContentRef = useRef<HTMLDivElement>(null);
-
+    
     // Auto-scroll to top only when this column becomes current
     useLayoutEffect(() => {
-      if (isCurrent && dayContentRef.current) {
-        dayContentRef.current.scrollTop = 0;
-      }
+        if (isCurrent && dayContentRef.current) {
+             dayContentRef.current.scrollTop = 0;
+        }
     }, [isCurrent]);
 
     // 35px padding + keyboard inset
     const bottomPad = 35 + keyboardInset;
 
     return (
-      <div
-        id={isCurrent ? 'bushi-day-content' : undefined}
-        ref={dayContentRef}
-        className="w-full h-full flex-shrink-0 snap-center overflow-y-auto"
-        style={{
-          WebkitOverflowScrolling: IS_IOS ? 'auto' : 'touch',
-          touchAction: IS_IOS ? ('pan-y' as any) : undefined,
-          overscrollBehaviorY: 'contain' as any,
-          overflowAnchor: 'none' as any,
-          paddingBottom: `${bottomPad}px`,
-          // iOS Safari can "stop painting" long overflow lists when the scroll container
-          // (or its ancestors) are promoted to their own compositing layer.
-          // Use containment/isolation instead of transform on the scroll container.
-          contain: IS_IOS ? undefined : ('layout paint' as any),
-          isolation: IS_IOS ? undefined : ('isolate' as any),
-        }}
-      >
         <div
-          className="w-full relative"
-          data-bushi-paint
-          style={{
-            // Promote a NON-scroll wrapper instead (more stable on iOS than promoting the scroll container)
-            WebkitTransform: 'translate3d(0,0,0)',
-            transform: 'translate3d(0,0,0)',
-            willChange: 'transform',
-          }}
+            id={isCurrent ? 'bushi-day-content' : undefined}
+            ref={dayContentRef}
+            className="w-full h-full flex-shrink-0 snap-center overflow-y-auto"
+            style={{
+                WebkitOverflowScrolling: IS_IOS ? 'auto' : 'touch',
+                touchAction: IS_IOS ? ('pan-y' as any) : undefined,
+                overscrollBehaviorY: 'contain' as any,
+                overflowAnchor: 'none' as any,
+                paddingBottom: `${bottomPad}px`,
+                // iOS Safari can "stop painting" long overflow lists when the scroll container
+                // (or its ancestors) are promoted to their own compositing layer.
+                // Use containment/isolation instead of transform on the scroll container.
+                contain: IS_IOS ? undefined : ('layout paint' as any),
+                isolation: IS_IOS ? undefined : ('isolate' as any),
+            }}
         >
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 px-0.5" style={{ gridAutoRows: 'min-content' }}>
-            {DAY_SLOTS.map((time) => {
-              const value = dayData?.[time] || '';
-              const isSaved = isCurrent && !!(savedPulse && savedPulse.day === iso && savedPulse.time === time);
-              const timeKey = `${iso}_${time}`;
-              const isArmed = armedRemove === timeKey;
-              const isHighlighted = !!highlight && highlight.day === iso && highlight.time === time;
+            <div 
+                className="w-full relative" data-bushi-paint
+                style={{ 
+                    // Promote a NON-scroll wrapper instead (more stable on iOS than promoting the scroll container)
+                    WebkitTransform: 'translate3d(0,0,0)',
+                    transform: 'translate3d(0,0,0)',
+                    willChange: 'transform',
+                }}
+            >
+                <div
+                    className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 px-0.5"
+                    style={{ gridAutoRows: 'min-content' }}
+                >
+                    {DAY_SLOTS.map((time) => {
+                        const value = dayData?.[time] || '';
+                        const isSaved = isCurrent && !!(savedPulse && savedPulse.day === iso && savedPulse.time === time);
+                        const timeKey = `${iso}_${time}`;
+                        const isArmed = armedRemove === timeKey;
+                        const isHighlighted = !!highlight && highlight.day === iso && highlight.time === time;
 
-              return (
-                <SlotRow
-                  key={timeKey}
-                  dayISO={iso}
-                  time={time}
-                  value={value}
-                  isSaved={isSaved}
-                  isArmed={isArmed}
-                  isHighlighted={isHighlighted}
-                  canWrite={remoteReady}
-                  onStartEditing={startEditing}
-                  onStopEditing={stopEditing}
-                  onSave={saveName}
-                  onArm={armRemove}
-                  onConfirmRemove={confirmRemove}
-                  onRevealFocus={revealFocus}
-                />
-              );
-            })}
-          </div>
+                        return (
+                            <SlotRow
+                                key={timeKey}
+                                dayISO={iso}
+                                time={time}
+                                value={value}
+                                isSaved={isSaved}
+                                isArmed={isArmed}
+                                isHighlighted={isHighlighted}
+                                canWrite={remoteReady}
+                                onStartEditing={startEditing}
+                                onStopEditing={stopEditing}
+                                onSave={saveName}
+                                onArm={armRemove}
+                                onConfirmRemove={confirmRemove}
+                                onRevealFocus={revealFocus}
+                            />
+                        );
+                    })}
+                </div>
 
-          {!remoteReady && (
-            <div className="mt-3 text-xs text-neutral-500 text-center" style={{ fontFamily: BRAND.fontBody }}>
-              Зареждане от сървъра…
+                {!remoteReady && (
+                    <div className="mt-3 text-xs text-neutral-500 text-center" style={{ fontFamily: BRAND.fontBody }}>
+                        Зареждане от сървъра…
+                    </div>
+                )}
             </div>
-          )}
         </div>
-      </div>
     );
-  },
-  (prev, next) => {
+}, (prev, next) => {
     return (
-      prev.iso === next.iso &&
-      prev.isCurrent === next.isCurrent &&
-      prev.keyboardInset === next.keyboardInset &&
-      prev.remoteReady === next.remoteReady &&
-      prev.dayData === next.dayData &&
-      prev.savedPulse === next.savedPulse &&
-      prev.armedRemove === next.armedRemove &&
-      prev.highlight === next.highlight
+        prev.iso === next.iso &&
+        prev.isCurrent === next.isCurrent &&
+        prev.keyboardInset === next.keyboardInset &&
+        prev.remoteReady === next.remoteReady &&
+        prev.dayData === next.dayData && 
+        prev.savedPulse === next.savedPulse &&
+        prev.armedRemove === next.armedRemove &&
+        prev.highlight === next.highlight
     );
-  }
-);
+});
 
 // =============================================================================
 // Main Calendar Component
@@ -567,117 +525,8 @@ function BarberCalendarCore() {
 
   const editingRef = useRef(false);
   const pendingRemoteRef = useRef<Store | null>(null);
-  const syncFromRemoteRef = useRef<(force?: boolean) => void>(() => {});
 
-  // Prevent fresh remote sync from overwriting a slot we just edited (fixes "text disappears on blur/day switch")
-    // Pending ops queue (prevents server poll from wiping optimistic edits)
-  // We keep local optimistic values and retry PATCH until the server confirms them.
-  type PendingOp = {
-    day: string;
-    time: string;
-    value: string | null; // null = clear
-    tries: number;
-    nextAt: number;
-  };
-
-  const PENDING_OPS_KEY = 'bushi_pending_ops_v1';
-  const pendingOpsRef = useRef<Record<string, PendingOp>>({});
-
-  const persistPendingOps = useCallback(() => {
-    try {
-      localStorage.setItem(PENDING_OPS_KEY, JSON.stringify(pendingOpsRef.current));
-    } catch {}
-  }, []);
-
-  // Load pending ops once
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    try {
-      const raw = localStorage.getItem(PENDING_OPS_KEY);
-      if (!raw) return;
-      const parsed = JSON.parse(raw);
-      if (parsed && typeof parsed === 'object') {
-        pendingOpsRef.current = parsed;
-      }
-    } catch {}
-  }, []);
-
-  const enqueuePendingOp = useCallback(
-    (day: string, time: string, value: string | null) => {
-      const key = `${day}__${time}`;
-      const now = Date.now();
-      const existing = pendingOpsRef.current[key];
-
-      pendingOpsRef.current[key] = {
-        day,
-        time,
-        value,
-        tries: existing?.tries ?? 0,
-        nextAt: now, // try immediately
-      };
-      persistPendingOps();
-    },
-    [persistPendingOps],
-  );
-
-  const scheduleRetry = (op: PendingOp) => {
-    // simple exponential backoff: 500ms, 1s, 2s, 4s, 8s (cap)
-    const base = 500;
-    const delay = Math.min(8000, base * Math.pow(2, Math.min(op.tries, 4)));
-    op.nextAt = Date.now() + delay;
-  };
-
-  const pumpPendingOpsOnce = useCallback(async () => {
-    if (typeof window === 'undefined') return;
-    if (!navigator.onLine) return;
-
-    const now = Date.now();
-    const entries = Object.entries(pendingOpsRef.current);
-    if (entries.length === 0) return;
-
-    for (const [key, op0] of entries) {
-      const op = op0 as PendingOp | undefined;
-      if (!op) continue;
-      if (op.nextAt > now) continue;
-      if (op.tries >= 6) continue;
-
-      op.tries += 1;
-
-      const ok = op.value == null ? await patchClearSlot(op.day, op.time) : await patchSetSlot(op.day, op.time, op.value);
-
-      if (!ok) {
-        scheduleRetry(op);
-        pendingOpsRef.current[key] = op;
-        persistPendingOps();
-        continue;
-      }
-
-      // PATCH ok — keep op until the next GET confirms it (applyRemoteSafely will clear it)
-      // but do a quick sync soon to speed up confirmation.
-      op.nextAt = Date.now() + 700;
-      pendingOpsRef.current[key] = op;
-      persistPendingOps();
-      window.setTimeout(() => {
-        syncFromRemoteRef.current(true);
-      }, 250);
-    }
-  }, [persistPendingOps]);
-
-  // Background pump while the app is open
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const t = window.setInterval(() => {
-      pumpPendingOpsOnce();
-    }, 1500);
-    const onOnline = () => pumpPendingOpsOnce();
-    window.addEventListener('online', onOnline);
-    return () => {
-      window.clearInterval(t);
-      window.removeEventListener('online', onOnline);
-    };
-  }, [pumpPendingOpsOnce]);
-
-const cancelledSyncRef = useRef(false);
+  const cancelledSyncRef = useRef(false);
   const syncingRef = useRef(false);
   const swallowNextClickRef = useRef(false);
 
@@ -690,50 +539,16 @@ const cancelledSyncRef = useRef(false);
 
   const applyRemoteSafely = useCallback((remote: Store) => {
     saveBackup(remote);
-
     if (editingRef.current) {
       pendingRemoteRef.current = remote;
       return;
     }
-
-    // Merge remote with our optimistic pending ops so polling can't "erase" saved names.
-    setStore((prev) => {
-      const merged: Store = JSON.parse(JSON.stringify(remote || {}));
-
-      for (const [k, op] of Object.entries(pendingOpsRef.current)) {
-        if (!op) continue;
-        const { day, time, value } = op as any;
-
-        // apply our local expectation on top of remote
-        if (value == null || String(value).trim().length === 0) {
-          if (merged[day]) {
-            delete merged[day][time];
-            if (Object.keys(merged[day]).length === 0) delete merged[day];
-          }
-        } else {
-          if (!merged[day]) merged[day] = {};
-          merged[day][time] = String(value).trim();
-        }
-
-        // if server already matches, clear op
-        const remoteVal = ((remote?.[day]?.[time] ?? '') as string).trim();
-        const expect = value == null ? '' : String(value).trim();
-        const matches = value == null ? remoteVal.length === 0 : remoteVal === expect;
-        if (matches) delete pendingOpsRef.current[k];
-      }
-
-      try {
-        localStorage.setItem(PENDING_OPS_KEY, JSON.stringify(pendingOpsRef.current));
-      } catch {}
-
-      return merged;
-    });
-
     pendingRemoteRef.current = null;
+    setStore(remote);
   }, []);
 
-  const syncFromRemote = useCallback(async (force: boolean = false) => {
-    if (syncingRef.current && !force) return;
+  const syncFromRemote = useCallback(async () => {
+    if (syncingRef.current) return;
     syncingRef.current = true;
     try {
       const remote = await fetchRemoteStore();
@@ -745,112 +560,6 @@ const cancelledSyncRef = useRef(false);
     }
   }, [applyRemoteSafely]);
 
-  useEffect(() => {
-    syncFromRemoteRef.current = syncFromRemote;
-  }, [syncFromRemote]);
-
-  // =============================================================================
-  // Realtime (Supabase) — instant cross-device sync (no more waiting 60s polling)
-  // =============================================================================
-  const supabaseRealtime = useMemo(() => {
-    const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-    const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-    if (!url || !anon) return null;
-    return createSupabaseClient(url, anon);
-  }, []);
-
-  useEffect(() => {
-    if (!supabaseRealtime) return;
-
-    // Subscribe to table changes. We still keep the 60s GET poll as a fallback.
-    const channel = supabaseRealtime
-      .channel('bushi-realtime-appointments')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'appointments' },
-        (payload: any) => {
-          // Apply the change locally immediately (fast), and also trigger a quick GET to confirm (safe).
-          try {
-            const ev = payload?.eventType as string;
-            const newRow = payload?.new ?? null;
-            const oldRow = payload?.old ?? null;
-
-            setStore((prev) => {
-              const next: Store = { ...(prev || {}) };
-
-              const applySet = (day: string, time: string, name: string) => {
-                if (!day || !time) return;
-                if (!next[day]) next[day] = {};
-                next[day][time] = name ?? '';
-                if (next[day][time].trim().length === 0) delete next[day][time];
-                if (Object.keys(next[day]).length === 0) delete next[day];
-              };
-
-              const applyClear = (day: string, time: string) => {
-                if (!day || !time) return;
-                if (next[day]) {
-                  delete next[day][time];
-                  if (Object.keys(next[day]).length === 0) delete next[day];
-                }
-              };
-
-              if (ev === 'DELETE') {
-                applyClear(oldRow?.day, oldRow?.time);
-              } else {
-                // INSERT / UPDATE
-                applySet(newRow?.day, newRow?.time, (newRow?.name ?? '') as string);
-              }
-
-              // If this realtime update matches a pending op, clear it (so it won't retry forever).
-              try {
-                const day = (ev === 'DELETE' ? oldRow?.day : newRow?.day) as string;
-                const time = (ev === 'DELETE' ? oldRow?.time : newRow?.time) as string;
-                if (day && time) {
-                  const key = `${day}__${time}`;
-                  const op = pendingOpsRef.current[key];
-                  if (op) {
-                    const expect = op.value == null ? '' : String(op.value).trim();
-                    const got = (ev === 'DELETE' ? '' : String(newRow?.name ?? '').trim());
-                    const matches = expect === got;
-                    if (matches) {
-                      delete pendingOpsRef.current[key];
-                      localStorage.setItem(PENDING_OPS_KEY, JSON.stringify(pendingOpsRef.current));
-                    }
-                  }
-                }
-              } catch {}
-
-              saveBackup(next);
-              return next;
-            });
-
-            // Safety net: confirm via GET soon (handles missed realtime events / reconnects).
-            window.setTimeout(() => {
-              syncFromRemoteRef.current(true);
-            }, 350);
-          } catch {
-            // If anything goes wrong, just fall back to a normal sync.
-            syncFromRemoteRef.current(true);
-          }
-        }
-      )
-      .subscribe((status: string) => {
-        if (status === 'SUBSCRIBED') {
-          // Make sure we start from server truth once subscribed
-          syncFromRemoteRef.current(true);
-        }
-      });
-
-    return () => {
-      try {
-        supabaseRealtime.removeChannel(channel);
-      } catch {}
-    };
-  }, [supabaseRealtime]);
-
-
-
-
   const isSlotInputFocused = useCallback(() => {
     if (typeof document === 'undefined') return false;
     const el = document.activeElement as HTMLElement | null;
@@ -859,28 +568,26 @@ const cancelledSyncRef = useRef(false);
     return typeof id === 'string' && id.startsWith('slot_');
   }, []);
 
-useEffect(() => {
-  cancelledSyncRef.current = false;
+  useEffect(() => {
+    cancelledSyncRef.current = false;
+    let interval: number | null = null;
 
-  (async () => {
-    await syncFromRemote(true); // load once
-  })();
+    (async () => {
+      await syncFromRemote();
+      interval = window.setInterval(syncFromRemote, 60000);
+    })();
 
-  // TEMP TEST: disable polling + visibility refresh
-  // let interval: number | null = null;
-  // interval = window.setInterval(syncFromRemote, 60000);
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') syncFromRemote();
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
 
-  // const handleVisibility = () => {
-  //   if (document.visibilityState === 'visible') syncFromRemote();
-  // };
-  // document.addEventListener('visibilitychange', handleVisibility);
-
-  return () => {
-    cancelledSyncRef.current = true;
-    // document.removeEventListener('visibilitychange', handleVisibility);
-    // if (interval != null) window.clearInterval(interval);
-  };
-}, [syncFromRemote]);
+    return () => {
+      cancelledSyncRef.current = true;
+      document.removeEventListener('visibilitychange', handleVisibility);
+      if (interval != null) window.clearInterval(interval);
+    };
+  }, [syncFromRemote, isSlotInputFocused]);
 
   const startEditing = useCallback(() => {
     editingRef.current = true;
@@ -888,32 +595,21 @@ useEffect(() => {
 
   const stopEditing = useCallback(() => {
     if (pendingRemoteRef.current) {
-      const remote = pendingRemoteRef.current;
       pendingRemoteRef.current = null;
-
-      // Apply the newest remote snapshot immediately, but keep any local pending writes.
-      applyRemoteSafely(remote);
-
-      // Give the PATCH a moment to propagate before we re-sync again.
       window.setTimeout(() => {
         syncFromRemote();
-      }, 3500);
+      }, 900);
     }
-
     window.setTimeout(() => {
       editingRef.current = isSlotInputFocused();
     }, 0);
-  }, [applyRemoteSafely, syncFromRemote, isSlotInputFocused]);
+  }, [syncFromRemote, isSlotInputFocused]);
 
   const revealFocus = useCallback((day: string, time: string, inputEl: HTMLInputElement) => {
     window.setTimeout(() => {
-      try {
-        inputEl.scrollIntoView({ block: 'center', behavior: 'smooth' });
-      } catch {}
+      try { inputEl.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch {}
       window.setTimeout(() => {
-        try {
-          inputEl.scrollIntoView({ block: 'center', behavior: 'smooth' });
-        } catch {}
+        try { inputEl.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch {}
       }, 140);
     }, 60);
   }, []);
@@ -979,7 +675,7 @@ useEffect(() => {
         armedTimeoutRef.current = null;
       }, 3500);
     },
-    [clearArmedTimeout]
+    [clearArmedTimeout],
   );
 
   const [savedPulse, setSavedPulse] = useState<{ day: string; time: string; ts: number } | null>(null);
@@ -1018,6 +714,12 @@ useEffect(() => {
     setDayTrackStyleIOS({ transform: `translate3d(${-w}px,0,0)`, transition: 'none' });
   }, [measureIOSDayWidth]);
 
+
+  // iOS Safari compositor workaround: long nested overflow lists can "stop painting"
+  // when momentum scrolling + scroll-snap are involved. Disabling momentum scrolling
+  // for the slot list (and the day swipe strip) on iOS is the most reliable fix.
+
+
   // Force iOS to repaint the current day list (visual-only blank/half-render bug)
   const forcePaintKick = useCallback(() => {
     if (!IS_IOS) return;
@@ -1039,139 +741,16 @@ useEffect(() => {
     });
   }, []);
 
-  // SAVE / DELETE
-  const saveName = useCallback(
-    (day: string, time: string, nameRaw: string) => {
-      if (!remoteReady) return;
-      const name = nameRaw.trim();
-      clearArmedTimeout();
-      enqueuePendingOp(day, time, name === '' ? null : name);
-
-      window.setTimeout(() => {
-        pumpPendingOpsOnce();
-      }, 0);
-      setStore((prev) => {
-        const next: Store = { ...prev };
-        if (!next[day]) next[day] = {};
-
-        if (name === '') {
-          if (next[day]) delete next[day][time];
-          if (next[day] && Object.keys(next[day]).length === 0) delete next[day];
-        } else {
-          next[day][time] = name;
-        }
-
-        saveBackup(next);
-        return next;
-      });
-
-      if (name === '') patchClearSlot(day, time);
-      else patchSetSlot(day, time, name);
-
-      setSavedPulse({ day, time, ts: Date.now() });
-      setTimeout(() => {
-        setSavedPulse((p) => (p && p.day === day && p.time === time ? null : p));
-      }, 900);
-
-      setArmedRemove(null);
-    },
-    [clearArmedTimeout, remoteReady, enqueuePendingOp, pumpPendingOpsOnce]
-  );
-
-  const confirmRemove = useCallback(
-    (day: string, time: string) => {
-      if (!remoteReady) return;
-      clearArmedTimeout();
-      enqueuePendingOp(day, time, null);
-
-      window.setTimeout(() => {
-        pumpPendingOpsOnce();
-      }, 0);
-      setStore((prev) => {
-        const next: Store = { ...prev };
-        if (next[day]) {
-          delete next[day][time];
-          if (Object.keys(next[day]).length === 0) delete next[day];
-        }
-        saveBackup(next);
-        return next;
-      });
-      setArmedRemove(null);
-    },
-    [clearArmedTimeout, remoteReady, enqueuePendingOp, pumpPendingOpsOnce]
-  );
-
-  // FIX V10: Flush the currently focused slot input (covers iOS tap-outside / swipe-day cases)
-  const flushActiveSlotDraft = useCallback(() => {
-    if (!remoteReady) return;
-    if (typeof document === 'undefined') return;
-    const el = document.activeElement as HTMLInputElement | null;
-    if (!el) return;
-    const id = (el as any).id as string | undefined;
-    if (typeof id !== 'string' || !id.startsWith('slot_')) return;
-
-    const day = (el.dataset?.dayiso || '').trim();
-    const time = (el.dataset?.time || '').trim();
-    if (!day || !time) return;
-
-    const orig = ((el.dataset?.orig ?? '') as string).trim();
-    const now = (el.value ?? '').trim();
-    if (orig === now) return;
-
-    // Keep dataset in sync to avoid double-saves
-    el.dataset.orig = el.value;
-    saveName(day, time, el.value);
-  }, [remoteReady, saveName]);
-
-  // ===========================================================================
+// ===========================================================================
   // iOS NUCLEAR FIX: translateX swipe track (avoids WebKit partial-paint bug)
   // ===========================================================================
   const IOS_SWIPE_THRESHOLD = 70;
   const IOS_SWIPE_CLAMP = 260;
 
-  // NATIVE SCROLL SNAP LOGIC (Day Swipe)
-  const dayScrollerRef = useRef<HTMLDivElement>(null);
-
-  // lock + debounce timers
-  const isShiftingRef = useRef(false);
-  const scrollEndTimerRef = useRef<number | null>(null);
-  const lastShiftAtRef = useRef<number>(0);
-
-  const clearScrollEndTimer = useCallback(() => {
-    if (scrollEndTimerRef.current != null) {
-      window.clearTimeout(scrollEndTimerRef.current);
-      scrollEndTimerRef.current = null;
-    }
-  }, []);
-
-  const centerDayScroller = useCallback((behavior: 'auto' | 'smooth' = 'auto') => {
-    const el = dayScrollerRef.current;
-    if (!el) return;
-    const w = el.offsetWidth;
-    if (!w) return;
-    if (behavior === 'smooth') el.scrollTo({ left: w, behavior: 'smooth' });
-    else el.scrollLeft = w;
-  }, []);
-
-  const shiftSelectedDay = (delta: number) => {
-    setSelectedDate((prev) => {
-      if (!prev) return prev;
-      const next = addDays(prev, delta);
-      if (next.getFullYear() !== viewYear || next.getMonth() !== viewMonth) {
-        setViewYear(next.getFullYear());
-        setViewMonth(next.getMonth());
-      }
-      return next;
-    });
-  };
-
   const commitIOSSwipe = useCallback(
     (delta: number) => {
       const w = dayWRefIOS.current || measureIOSDayWidth();
       if (!w) return;
-
-      // FIX V10: save active draft before changing day
-      flushActiveSlotDraft();
 
       // Animate to prev (0) or next (-2w). We are centered at -w.
       const targetX = delta > 0 ? -2 * w : 0;
@@ -1188,7 +767,7 @@ useEffect(() => {
         });
       }, 170);
     },
-    [measureIOSDayWidth, viewMonth, viewYear, flushActiveSlotDraft]
+    [measureIOSDayWidth, viewMonth, viewYear],
   );
 
   const onIOSPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -1267,6 +846,44 @@ useEffect(() => {
     }
   };
 
+// ===========================================================================
+  // NATIVE SCROLL SNAP LOGIC (Day Swipe)
+  // ===========================================================================
+  const dayScrollerRef = useRef<HTMLDivElement>(null);
+
+  // lock + debounce timers
+  const isShiftingRef = useRef(false);
+  const scrollEndTimerRef = useRef<number | null>(null);
+  const lastShiftAtRef = useRef<number>(0);
+
+  const clearScrollEndTimer = useCallback(() => {
+    if (scrollEndTimerRef.current != null) {
+      window.clearTimeout(scrollEndTimerRef.current);
+      scrollEndTimerRef.current = null;
+    }
+  }, []);
+
+  const centerDayScroller = useCallback((behavior: 'auto' | 'smooth' = 'auto') => {
+    const el = dayScrollerRef.current;
+    if (!el) return;
+    const w = el.offsetWidth;
+    if (!w) return;
+    if (behavior === 'smooth') el.scrollTo({ left: w, behavior: 'smooth' });
+    else el.scrollLeft = w;
+  }, []);
+
+  const shiftSelectedDay = (delta: number) => {
+    setSelectedDate((prev) => {
+      if (!prev) return prev;
+      const next = addDays(prev, delta);
+      if (next.getFullYear() !== viewYear || next.getMonth() !== viewMonth) {
+        setViewYear(next.getFullYear());
+        setViewMonth(next.getMonth());
+      }
+      return next;
+    });
+  };
+
   const commitShiftDay = useCallback(
     (delta: number) => {
       const el = dayScrollerRef.current;
@@ -1281,16 +898,13 @@ useEffect(() => {
         return;
       }
 
-      // FIX V10: save active draft before changing day
-      flushActiveSlotDraft();
-
       lastShiftAtRef.current = now;
       isShiftingRef.current = true;
 
       (el.style as any).scrollSnapType = 'none';
       el.scrollLeft = w;
       // eslint-disable-next-line @typescript-eslint/no-unused-expressions
-      (el as any).offsetHeight;
+      (el as any).offsetHeight; 
 
       requestAnimationFrame(() => {
         const cur = dayScrollerRef.current;
@@ -1310,9 +924,12 @@ useEffect(() => {
         (cur as any).offsetHeight;
         const currentCol = document.getElementById('bushi-day-content') as HTMLDivElement | null;
         if (currentCol) {
+          // Re-assert scrollTop (even if already 0) to trigger paint
+          // Hard paint kick: tiny scrollTop jiggle forces iOS to redraw rows
           const prevTop = currentCol.scrollTop;
           currentCol.scrollTop = prevTop + 1;
           currentCol.scrollTop = prevTop;
+          // Force layout
           currentCol.getBoundingClientRect();
           forcePaintKick();
           // eslint-disable-next-line @typescript-eslint/no-unused-expressions
@@ -1324,7 +941,7 @@ useEffect(() => {
         isShiftingRef.current = false;
       }, 520);
     },
-    [centerDayScroller, viewMonth, viewYear, flushActiveSlotDraft, forcePaintKick]
+    [centerDayScroller, viewMonth, viewYear],
   );
 
   const handleDayScrollEnd = useCallback(() => {
@@ -1366,15 +983,16 @@ useEffect(() => {
     if (!selectedDate) return;
     if (IS_IOS) requestAnimationFrame(() => resetIOSTrack());
     clearScrollEndTimer();
-
+    
     requestAnimationFrame(() => {
       centerDayScroller('auto');
       requestAnimationFrame(() => {
+        // Extra kick right after centering (helps the *first* swipe paint on iOS)
         forcePaintKick();
         isShiftingRef.current = false;
       });
     });
-  }, [selectedDayISO, selectedDate, centerDayScroller, clearScrollEndTimer, resetIOSTrack, forcePaintKick]);
+  }, [selectedDayISO, selectedDate, centerDayScroller, clearScrollEndTimer]);
 
   useEffect(() => {
     setPanelStyle({});
@@ -1385,9 +1003,6 @@ useEffect(() => {
   useEffect(() => () => clearArmedTimeout(), [clearArmedTimeout]);
 
   const animateCloseDown = () => {
-    // FIX V10: save active draft before closing the modal
-    flushActiveSlotDraft();
-
     setPanelStyle({
       transform: 'translateY(160px)',
       opacity: 0,
@@ -1399,6 +1014,62 @@ useEffect(() => {
       setPendingFocus(null);
     }, 170);
   };
+
+  // SAVE / DELETE
+  const saveName = useCallback(
+    (day: string, time: string, nameRaw: string) => {
+      if (!remoteReady) return;
+      const name = nameRaw.trim();
+      clearArmedTimeout();
+
+      setStore((prev) => {
+        const next: Store = { ...prev };
+        if (!next[day]) next[day] = {};
+
+        if (name === '') {
+          if (next[day]) delete next[day][time];
+          if (next[day] && Object.keys(next[day]).length === 0) delete next[day];
+        } else {
+          next[day][time] = name;
+        }
+
+        saveBackup(next);
+        return next;
+      });
+
+      if (name === '') patchClearSlot(day, time);
+      else patchSetSlot(day, time, name);
+
+      setSavedPulse({ day, time, ts: Date.now() });
+      setTimeout(() => {
+        setSavedPulse((p) => (p && p.day === day && p.time === time ? null : p));
+      }, 900);
+
+      setArmedRemove(null);
+    },
+    [clearArmedTimeout, remoteReady],
+  );
+
+  const confirmRemove = useCallback(
+    (day: string, time: string) => {
+      if (!remoteReady) return;
+      clearArmedTimeout();
+
+      setStore((prev) => {
+        const next: Store = { ...prev };
+        if (next[day]) {
+          delete next[day][time];
+          if (Object.keys(next[day]).length === 0) delete next[day];
+        }
+        saveBackup(next);
+        return next;
+      });
+
+      patchClearSlot(day, time);
+      setArmedRemove(null);
+    },
+    [clearArmedTimeout, remoteReady],
+  );
 
   useEffect(() => {
     if (!selectedDate) return;
@@ -1421,9 +1092,7 @@ useEffect(() => {
     const t = window.setTimeout(() => {
       const el = document.getElementById(id) as HTMLInputElement | null;
       if (el) {
-        try {
-          el.scrollIntoView({ block: 'center', behavior: 'smooth' });
-        } catch {}
+        try { el.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch {}
         el.focus();
         el.select();
       }
@@ -1436,9 +1105,6 @@ useEffect(() => {
   const matrix = useMemo(() => monthMatrix(viewYear, viewMonth), [viewYear, viewMonth]);
 
   const openDay = (d: Date) => {
-    // FIX V10: save active draft before switching to another day
-    flushActiveSlotDraft();
-
     if (d.getFullYear() !== viewYear || d.getMonth() !== viewMonth) {
       setViewYear(d.getFullYear());
       setViewMonth(d.getMonth());
@@ -1646,7 +1312,6 @@ useEffect(() => {
     monthModeRef.current = 'none';
     monthBlockClickRef.current = false;
   };
-
   // Year modal swipe gestures (left/right to change year)
   const yearStartX = useRef<number | null>(null);
   const yearStartY = useRef<number | null>(null);
@@ -1670,6 +1335,7 @@ useEffect(() => {
   };
 
   const animateYearShift = (delta: number) => {
+    // small slide + fade animation
     setYearStyle({
       transform: `translateX(${delta > 0 ? -22 : 22}px)`,
       opacity: 0.55,
@@ -1720,6 +1386,7 @@ useEffect(() => {
     }
 
     if (yearModeRef.current === 'horizontal') {
+      // keep the modal stable while swiping
       e.preventDefault();
       const dx = clamp(dxRaw, -YEAR_H_CLAMP, YEAR_H_CLAMP);
       setYearStyle({ transform: `translateX(${dx}px)`, opacity: 0.85, transition: 'none' });
@@ -1739,11 +1406,7 @@ useEffect(() => {
       if (Math.abs(dx) >= YEAR_SWIPE_THRESHOLD) {
         animateYearShift(dx < 0 ? +1 : -1);
       } else {
-        setYearStyle({
-          transform: 'translateX(0)',
-          opacity: 1,
-          transition: `transform 140ms ${SNAP_EASE}, opacity 140ms ${SNAP_EASE}`,
-        });
+        setYearStyle({ transform: 'translateX(0)', opacity: 1, transition: `transform 140ms ${SNAP_EASE}, opacity 140ms ${SNAP_EASE}` });
       }
 
       setTimeout(() => {
@@ -1758,13 +1421,13 @@ useEffect(() => {
     yearBlockClickRef.current = false;
   };
 
+
   const [yearStyle, setYearStyle] = useState<React.CSSProperties>({});
 
   // Helper to get props for DayColumn
-  const getDayProps = useCallback(
-    (date: Date, isCurrent: boolean) => {
-      const iso = toISODate(date);
-      return {
+  const getDayProps = useCallback((date: Date, isCurrent: boolean) => {
+    const iso = toISODate(date);
+    return {
         key: iso, // STABLE KEY is crucial
         date,
         isCurrent,
@@ -1779,24 +1442,9 @@ useEffect(() => {
         saveName,
         armRemove,
         confirmRemove,
-        revealFocus,
-      };
-    },
-    [
-      store,
-      keyboardInset,
-      remoteReady,
-      savedPulse,
-      armedRemove,
-      highlight,
-      startEditing,
-      stopEditing,
-      saveName,
-      armRemove,
-      confirmRemove,
-      revealFocus,
-    ]
-  );
+        revealFocus
+    };
+  }, [store, keyboardInset, remoteReady, savedPulse, armedRemove, highlight, startEditing, stopEditing, saveName, armRemove, confirmRemove, revealFocus]);
 
   return (
     <div
@@ -1808,6 +1456,7 @@ useEffect(() => {
       }}
     >
       <div className="max-w-screen-2xl mx-auto px-[clamp(12px,2.5vw,40px)] pt-[clamp(12px,2.5vw,40px)] pb-[clamp(8px,2vw,24px)] h-full flex flex-col select-none">
+        
         <div className="flex flex-col md:flex-row items-center justify-center md:justify-between gap-1 md:gap-6">
           <img
             src={BRAND.logoLight}
@@ -1830,10 +1479,7 @@ useEffect(() => {
         </div>
 
         {/* Weekdays */}
-        <div
-          className="mt-[clamp(12px,2.8vw,28px)] grid grid-cols-7 gap-[clamp(6px,1.2vw,16px)] text-center"
-          style={{ fontFamily: BRAND.fontTitle }}
-        >
+        <div className="mt-[clamp(12px,2.8vw,28px)] grid grid-cols-7 gap-[clamp(6px,1.2vw,16px)] text-center" style={{ fontFamily: BRAND.fontTitle }}>
           {WEEKDAYS_SHORT.map((d, idx) => {
             const isSat = idx === 5;
             const isSun = idx === 6;
@@ -1877,27 +1523,13 @@ useEffect(() => {
             const cls = [
               'rounded-2xl flex items-center justify-center bg-neutral-900 text-white border transition cursor-pointer',
               'h-full w-full aspect-square md:aspect-auto p-[clamp(6px,1vw,20px)] focus:outline-none',
-              !inMonth
-                ? 'border-neutral-800 opacity-40 hover:opacity-70'
-                : isToday
-                  ? 'border-white/70 ring-2 ring-white/20'
-                  : 'border-neutral-700 hover:border-white/60',
+              !inMonth ? 'border-neutral-800 opacity-40 hover:opacity-70' : isToday ? 'border-white/70 ring-2 ring-white/20' : 'border-neutral-700 hover:border-white/60',
             ].join(' ');
 
             return (
-              <button
-                key={key}
-                onClick={() => {
-                  if (monthBlockClickRef.current) return;
-                  openDay(d);
-                }}
-                className={cls}
-              >
+              <button key={key} onClick={() => { if (monthBlockClickRef.current) return; openDay(d); }} className={cls}>
                 <div className="flex flex-col items-center justify-center gap-2 w-full">
-                  <span
-                    className={`select-none text-[clamp(17px,3.5vw,32px)] ${isToday ? 'font-extrabold' : ''}`}
-                    style={{ fontFamily: BRAND.fontNumbers }}
-                  >
+                  <span className={`select-none text-[clamp(17px,3.5vw,32px)] ${isToday ? 'font-extrabold' : ''}`} style={{ fontFamily: BRAND.fontNumbers }}>
                     {inMonth && full ? 'X' : num}
                   </span>
                   {showBar && (
@@ -1940,8 +1572,8 @@ useEffect(() => {
           }}
         >
           <div className="w-[min(100%-28px,860px)] max-w-2xl rounded-3xl border border-neutral-800 bg-neutral-950/95 shadow-2xl px-5 py-5 sm:px-7 sm:py-7">
-            <div className="flex items-center justify-between gap-3">
-              <div className="text-[clamp(22px,4.2vw,32px)] leading-none select-none" style={{ fontFamily: BRAND.fontTitle }}>
+             <div className="flex items-center justify-between gap-3">
+               <div className="text-[clamp(22px,4.2vw,32px)] leading-none select-none" style={{ fontFamily: BRAND.fontTitle }}>
                 Най-близки свободни часове
               </div>
               <button
@@ -1953,10 +1585,8 @@ useEffect(() => {
               </button>
             </div>
             <div className="mt-4 max-h-[62vh] overflow-y-auto pr-1">
-              {closestAvail.length === 0 ? (
-                <div className="text-neutral-400 text-sm" style={{ fontFamily: BRAND.fontBody }}>
-                  Няма свободни часове напред.
-                </div>
+               {closestAvail.length === 0 ? (
+                <div className="text-neutral-400 text-sm" style={{ fontFamily: BRAND.fontBody }}>Няма свободни часове напред.</div>
               ) : (
                 <div className="space-y-3">
                   {closestGrouped.map(({ dayISO, list }) => (
@@ -1971,9 +1601,7 @@ useEffect(() => {
                             onClick={() => openFromAvailability(h.dayISO, h.time)}
                             className="rounded-xl border border-neutral-800 bg-neutral-950/60 hover:bg-neutral-900/70 px-3 py-2 text-center"
                           >
-                            <div className="text-sm font-semibold tabular-nums" style={{ fontFamily: BRAND.fontBody }}>
-                              {h.time}
-                            </div>
+                             <div className="text-sm font-semibold tabular-nums" style={{ fontFamily: BRAND.fontBody }}>{h.time}</div>
                           </button>
                         ))}
                       </div>
@@ -1999,42 +1627,30 @@ useEffect(() => {
           }}
         >
           <div className="w-[min(100%-28px,860px)] max-w-2xl rounded-3xl border border-neutral-800 bg-neutral-950/95 shadow-2xl px-5 py-5 sm:px-7 sm:py-7">
-            <div className="text-[clamp(22px,4.2vw,32px)] leading-none select-none" style={{ fontFamily: BRAND.fontTitle }}>
-              Търсене на клиент
-            </div>
-            <div className="mt-4">
-              <input
+             <div className="text-[clamp(22px,4.2vw,32px)] leading-none select-none" style={{ fontFamily: BRAND.fontTitle }}>Търсене на клиент</div>
+             <div className="mt-4">
+               <input
                 ref={searchInputRef}
                 value={searchQ}
                 onChange={(e) => setSearchQ(e.target.value)}
                 placeholder="Въведи име…"
                 className="w-full rounded-2xl bg-neutral-900/70 border border-neutral-700/70 px-4 py-3 text-base"
                 style={{ fontFamily: BRAND.fontBody }}
-              />
-            </div>
-            <div className="mt-4 max-h-[58vh] overflow-y-auto pr-1">
-              {hits.length === 0 ? (
-                <div className="text-neutral-400 text-sm" style={{ fontFamily: BRAND.fontBody }}>
-                  Няма резултати.
-                </div>
-              ) : (
-                <div className="space-y-3">
+               />
+             </div>
+             <div className="mt-4 max-h-[58vh] overflow-y-auto pr-1">
+               {hits.length === 0 ? (
+                 <div className="text-neutral-400 text-sm" style={{ fontFamily: BRAND.fontBody }}>Няма резултати.</div>
+               ) : (
+                 <div className="space-y-3">
                   {groupedHits.map(({ dayISO, list }) => (
                     <div key={dayISO} className="rounded-2xl border border-neutral-800 bg-neutral-900/40 p-3">
-                      <div className="text-sm text-neutral-200 mb-2" style={{ fontFamily: BRAND.fontBody }}>
-                        {formatDayLabel(dayISO)}
-                      </div>
+                      <div className="text-sm text-neutral-200 mb-2" style={{ fontFamily: BRAND.fontBody }}>{formatDayLabel(dayISO)}</div>
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                         {list.map((h) => (
-                          <button
-                            key={`${h.dayISO}_${h.time}_${h.name}`}
-                            onClick={() => openFromSearch(h.dayISO, h.time)}
-                            className="rounded-xl border border-neutral-800 bg-neutral-950/60 hover:bg-neutral-900/70 px-3 py-2 text-left"
-                          >
+                           <button key={`${h.dayISO}_${h.time}_${h.name}`} onClick={() => openFromSearch(h.dayISO, h.time)} className="rounded-xl border border-neutral-800 bg-neutral-950/60 hover:bg-neutral-900/70 px-3 py-2 text-left">
                             <div className="flex items-center justify-between gap-3">
-                              <div className="text-sm font-semibold tabular-nums" style={{ fontFamily: BRAND.fontBody }}>
-                                {h.time}
-                              </div>
+                              <div className="text-sm font-semibold tabular-nums" style={{ fontFamily: BRAND.fontBody }}>{h.time}</div>
                               <div className="text-sm text-neutral-200 truncate">{h.name}</div>
                             </div>
                           </button>
@@ -2042,39 +1658,31 @@ useEffect(() => {
                       </div>
                     </div>
                   ))}
-                </div>
-              )}
-            </div>
+                 </div>
+               )}
+             </div>
           </div>
         </div>
       )}
 
       {/* Year Modal */}
       {showYear && (
-        <div
-          className="fixed inset-0 z-40 flex items-center justify-center bg-black/70"
-          onClick={(e) => {
-            if (yearBlockClickRef.current) {
-              e.preventDefault();
-              yearBlockClickRef.current = false;
-              return;
-            }
-            setShowYear(false);
-          }}
-        >
-          <div
-            className="w-[min(100%-32px,820px)] max-w-xl rounded-3xl border border-neutral-800 bg-neutral-950/95 shadow-2xl px-6 py-6 sm:px-8 sm:py-8"
-            style={{ ...yearStyle, touchAction: 'pan-y' as any }}
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/70" onClick={(e) => {
+          if (yearBlockClickRef.current) {
+            e.preventDefault();
+            yearBlockClickRef.current = false;
+            return;
+          }
+          setShowYear(false);
+        }}>
+          <div className="w-[min(100%-32px,820px)] max-w-xl rounded-3xl border border-neutral-800 bg-neutral-950/95 shadow-2xl px-6 py-6 sm:px-8 sm:py-8" style={{ ...yearStyle, touchAction: 'pan-y' as any }}
             onTouchStart={onYearTouchStart}
             onTouchMove={onYearTouchMove}
             onTouchEnd={onYearTouchEnd}
             onTouchCancel={onYearTouchEnd}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-center">
-              <div className="text-[clamp(30px,6vw,44px)] leading-none select-none" style={{ fontFamily: BRAND.fontTitle }}>
-                {viewYear}
-              </div>
+            onClick={(e) => e.stopPropagation()}>
+             <div className="flex items-center justify-center">
+              <div className="text-[clamp(30px,6vw,44px)] leading-none select-none" style={{ fontFamily: BRAND.fontTitle }}>{viewYear}</div>
             </div>
             <div className="mt-6 grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-4">
               {MONTHS.map((label, idx) => (
@@ -2091,9 +1699,7 @@ useEffect(() => {
                     setShowYear(false);
                   }}
                   className={`h-11 sm:h-12 rounded-2xl border text-[13px] sm:text-[14px] uppercase tracking-[0.12em] transition ${
-                    idx === viewMonth
-                      ? 'border-white text-white bg-neutral-900'
-                      : 'border-neutral-700/70 text-neutral-200 bg-neutral-900/50 hover:bg-neutral-800'
+                    idx === viewMonth ? 'border-white text-white bg-neutral-900' : 'border-neutral-700/70 text-neutral-200 bg-neutral-900/50 hover:bg-neutral-800'
                   }`}
                   style={{ fontFamily: BRAND.fontTitle }}
                 >
@@ -2115,10 +1721,13 @@ useEffect(() => {
             onTouchStart={(e) => e.stopPropagation()}
           >
             {/* Header */}
-            <div className="flex-shrink-0 flex items-center justify-between cursor-pointer mb-4" onClick={animateCloseDown} title="Tap to close">
+            <div
+              className="flex-shrink-0 flex items-center justify-between cursor-pointer mb-4"
+              onClick={animateCloseDown}
+              title="Tap to close"
+            >
               <h3 className="text-2xl md:text-3xl font-bold" style={{ fontFamily: BRAND.fontTitle }}>
-                {WEEKDAYS_FULL[(selectedDate.getDay() + 6) % 7]} {selectedDate.getDate()} {MONTHS[selectedDate.getMonth()]}{' '}
-                {selectedDate.getFullYear()}
+                {WEEKDAYS_FULL[(selectedDate.getDay() + 6) % 7]} {selectedDate.getDate()} {MONTHS[selectedDate.getMonth()]} {selectedDate.getFullYear()}
               </h3>
               <div className="w-10 md:w-12" />
             </div>
@@ -2148,24 +1757,25 @@ useEffect(() => {
               </div>
             ) : (
               <>
-                {/* Native Scroll Snap Container - FIX V6 */}
-                <div className="flex-1 w-full min-h-0">
-                  <div
-                    ref={dayScrollerRef}
-                    onScroll={onDayScroll}
-                    className="w-full h-full flex overflow-x-auto snap-x snap-mandatory no-scrollbar"
-                    style={{
-                      WebkitOverflowScrolling: IS_IOS ? 'auto' : 'touch',
-                      overscrollBehaviorX: 'contain' as any,
-                      // Helps iOS Safari repaint long scrollable content after fast snap swipes
-                      WebkitTransform: 'translate3d(0,0,0)',
-                    }}
-                  >
-                    <DayColumn {...getDayProps(addDays(selectedDate, -1), false)} />
-                    <DayColumn {...getDayProps(selectedDate, true)} />
-                    <DayColumn {...getDayProps(addDays(selectedDate, 1), false)} />
-                  </div>
-                </div>
+{/* Native Scroll Snap Container - FIX V6 */}
+            <div className="flex-1 w-full min-h-0">
+              <div
+                 ref={dayScrollerRef}
+                 onScroll={onDayScroll}
+                 className="w-full h-full flex overflow-x-auto snap-x snap-mandatory no-scrollbar"
+                 style={{
+                   WebkitOverflowScrolling: IS_IOS ? 'auto' : 'touch',
+                   overscrollBehaviorX: 'contain' as any,
+                   // Helps iOS Safari repaint long scrollable content after fast snap swipes
+                   WebkitTransform: 'translate3d(0,0,0)',
+                 }}
+              >
+                  {/* We use the extracted component <DayColumn /> here */}
+                  <DayColumn {...getDayProps(addDays(selectedDate, -1), false)} />
+                  <DayColumn {...getDayProps(selectedDate, true)} />
+                  <DayColumn {...getDayProps(addDays(selectedDate, 1), false)} />
+               </div>
+            </div>
               </>
             )}
           </div>
@@ -2207,36 +1817,15 @@ export default function BarbershopAdminPanel() {
         <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(255,255,255,0.16)_0,_transparent_55%),radial-gradient(circle_at_bottom,_rgba(255,255,255,0.12)_0,_transparent_55%)]" />
         <div className="relative w-[min(100%-40px,420px)] rounded-[32px] border border-white/10 bg-[rgba(8,8,8,0.9)] backdrop-blur-xl px-7 py-8 shadow-[0_24px_80px_rgba(0,0,0,0.9)]">
           <div className="mb-4 flex justify-center">
-            <img src="/bush.png" alt="Bushi logo" className="max-h-16 w-auto object-contain" />
+             <img src="/bush.png" alt="Bushi logo" className="max-h-16 w-auto object-contain" />
           </div>
-          <p className="text-xs text-neutral-400 text-center mb-6" style={{ fontFamily: BRAND.fontBody }}>
-            Enter your PIN.
-          </p>
+          <p className="text-xs text-neutral-400 text-center mb-6" style={{ fontFamily: BRAND.fontBody }}>Enter your PIN.</p>
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="rounded-2xl bg-neutral-900/80 border border-white/12 px-4 py-3 flex items-center focus-within:border-white/70 transition">
-              <input
-                type="password"
-                inputMode="numeric"
-                autoComplete="off"
-                value={pin}
-                onChange={(e) => setPin(e.target.value)}
-                maxLength={6}
-                className="w-full bg-transparent border-none outline-none text-center text-lg tracking-[0.35em] placeholder:text-neutral-600"
-                style={{ fontFamily: BRAND.fontBody }}
-                placeholder="••••"
-              />
+              <input type="password" inputMode="numeric" autoComplete="off" value={pin} onChange={(e) => setPin(e.target.value)} maxLength={6} className="w-full bg-transparent border-none outline-none text-center text-lg tracking-[0.35em] placeholder:text-neutral-600" style={{ fontFamily: BRAND.fontBody }} placeholder="••••" />
             </div>
-            {error && (
-              <div className="text-xs text-red-400 text-center" style={{ fontFamily: BRAND.fontBody }}>
-                {error}
-              </div>
-            )}
-            <button
-              type="submit"
-              className="w-full rounded-2xl bg-white text-black font-semibold py-2.5 text-sm tracking-[0.16em] uppercase hover:bg-neutral-200 transition"
-            >
-              Unlock
-            </button>
+            {error && <div className="text-xs text-red-400 text-center" style={{ fontFamily: BRAND.fontBody }}>{error}</div>}
+            <button type="submit" className="w-full rounded-2xl bg-white text-black font-semibold py-2.5 text-sm tracking-[0.16em] uppercase hover:bg-neutral-200 transition">Unlock</button>
           </form>
         </div>
       </div>
