@@ -7,6 +7,7 @@
 // FIX V12: Durable Write Queue — prevents server poll/race from wiping saved names; retries PATCH until server confirms.
 
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 
 // =============================================================================
 // Brand / Fonts
@@ -170,18 +171,21 @@ const API_ENDPOINT = '/api/appointments';
 async function fetchRemoteStore(): Promise<Store | null> {
   if (typeof window === 'undefined') return null;
   try {
-    const res = await fetch(API_ENDPOINT, { method: 'GET', cache: 'no-store' });
+    // cache-buster avoids any weird CDN/browser caching
+    const url = `${API_ENDPOINT}?t=${Date.now()}`;
+    const res = await fetch(url, {
+      method: 'GET',
+      cache: 'no-store',
+      headers: { 'Cache-Control': 'no-store', Pragma: 'no-cache' },
+    });
     if (!res.ok) return null;
-
     const data: any = await res.json();
+    if (!data || typeof data !== 'object') return null;
 
-    // Support BOTH response shapes:
-    // 1) Old: { "2026-02-25": { "15:30": "Name", ... }, ... }
-    // 2) New: { ok: true, store: { ...same as above... } }
-    const maybeStore =
-      data && typeof data === 'object' && data.store && typeof data.store === 'object'
-        ? data.store
-        : data;
+    // Support both response shapes:
+    //  1) store directly: { "YYYY-MM-DD": { "HH:MM": "Name" } }
+    //  2) wrapped: { ok:true, store:{...} }
+    const maybeStore = (data.store && typeof data.store === 'object') ? data.store : data;
 
     if (!maybeStore || typeof maybeStore !== 'object') return null;
     return maybeStore as Store;
@@ -190,11 +194,14 @@ async function fetchRemoteStore(): Promise<Store | null> {
   }
 }
 
+
 async function patchSetSlot(day: string, time: string, name: string): Promise<boolean> {
   try {
     const res = await fetch(API_ENDPOINT, {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
+      cache: 'no-store',
+      keepalive: true as any, // helps mobile Safari not cancel the request on fast swipe/blur
+      headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
       body: JSON.stringify({ op: 'set', day, time, name }),
     });
     return res.ok;
@@ -207,7 +214,9 @@ async function patchClearSlot(day: string, time: string): Promise<boolean> {
   try {
     const res = await fetch(API_ENDPOINT, {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
+      cache: 'no-store',
+      keepalive: true as any,
+      headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
       body: JSON.stringify({ op: 'clear', day, time }),
     });
     return res.ok;
@@ -739,6 +748,105 @@ const cancelledSyncRef = useRef(false);
   useEffect(() => {
     syncFromRemoteRef.current = syncFromRemote;
   }, [syncFromRemote]);
+
+  // =============================================================================
+  // Realtime (Supabase) — instant cross-device sync (no more waiting 60s polling)
+  // =============================================================================
+  const supabaseRealtime = useMemo(() => {
+    const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+    if (!url || !anon) return null;
+    return createSupabaseClient(url, anon);
+  }, []);
+
+  useEffect(() => {
+    if (!supabaseRealtime) return;
+
+    // Subscribe to table changes. We still keep the 60s GET poll as a fallback.
+    const channel = supabaseRealtime
+      .channel('bushi-realtime-appointments')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'appointments' },
+        (payload: any) => {
+          // Apply the change locally immediately (fast), and also trigger a quick GET to confirm (safe).
+          try {
+            const ev = payload?.eventType as string;
+            const newRow = payload?.new ?? null;
+            const oldRow = payload?.old ?? null;
+
+            setStore((prev) => {
+              const next: Store = { ...(prev || {}) };
+
+              const applySet = (day: string, time: string, name: string) => {
+                if (!day || !time) return;
+                if (!next[day]) next[day] = {};
+                next[day][time] = name ?? '';
+                if (next[day][time].trim().length === 0) delete next[day][time];
+                if (Object.keys(next[day]).length === 0) delete next[day];
+              };
+
+              const applyClear = (day: string, time: string) => {
+                if (!day || !time) return;
+                if (next[day]) {
+                  delete next[day][time];
+                  if (Object.keys(next[day]).length === 0) delete next[day];
+                }
+              };
+
+              if (ev === 'DELETE') {
+                applyClear(oldRow?.day, oldRow?.time);
+              } else {
+                // INSERT / UPDATE
+                applySet(newRow?.day, newRow?.time, (newRow?.name ?? '') as string);
+              }
+
+              // If this realtime update matches a pending op, clear it (so it won't retry forever).
+              try {
+                const day = (ev === 'DELETE' ? oldRow?.day : newRow?.day) as string;
+                const time = (ev === 'DELETE' ? oldRow?.time : newRow?.time) as string;
+                if (day && time) {
+                  const key = `${day}__${time}`;
+                  const op = pendingOpsRef.current[key];
+                  if (op) {
+                    const expect = op.value == null ? '' : String(op.value).trim();
+                    const got = (ev === 'DELETE' ? '' : String(newRow?.name ?? '').trim());
+                    const matches = expect === got;
+                    if (matches) {
+                      delete pendingOpsRef.current[key];
+                      localStorage.setItem(PENDING_OPS_KEY, JSON.stringify(pendingOpsRef.current));
+                    }
+                  }
+                }
+              } catch {}
+
+              saveBackup(next);
+              return next;
+            });
+
+            // Safety net: confirm via GET soon (handles missed realtime events / reconnects).
+            window.setTimeout(() => {
+              syncFromRemoteRef.current(true);
+            }, 350);
+          } catch {
+            // If anything goes wrong, just fall back to a normal sync.
+            syncFromRemoteRef.current(true);
+          }
+        }
+      )
+      .subscribe((status: string) => {
+        if (status === 'SUBSCRIBED') {
+          // Make sure we start from server truth once subscribed
+          syncFromRemoteRef.current(true);
+        }
+      });
+
+    return () => {
+      try {
+        supabaseRealtime.removeChannel(channel);
+      } catch {}
+    };
+  }, [supabaseRealtime]);
 
 
 
