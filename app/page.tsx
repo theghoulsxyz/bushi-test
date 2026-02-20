@@ -172,9 +172,19 @@ async function fetchRemoteStore(): Promise<Store | null> {
   try {
     const res = await fetch(API_ENDPOINT, { method: 'GET', cache: 'no-store' });
     if (!res.ok) return null;
-    const data = await res.json();
-    if (!data || typeof data !== 'object') return null;
-    return data as Store;
+
+    const data: any = await res.json();
+
+    // Support BOTH response shapes:
+    // 1) Old: { "2026-02-25": { "15:30": "Name", ... }, ... }
+    // 2) New: { ok: true, store: { ...same as above... } }
+    const maybeStore =
+      data && typeof data === 'object' && data.store && typeof data.store === 'object'
+        ? data.store
+        : data;
+
+    if (!maybeStore || typeof maybeStore !== 'object') return null;
+    return maybeStore as Store;
   } catch {
     return null;
   }
