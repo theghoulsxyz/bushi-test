@@ -135,6 +135,26 @@ function buildSlots() {
 const DAY_SLOTS = buildSlots();
 
 type Store = Record<string, Record<string, string>>;
+function updateStoreSlot(prev: Store, day: string, time: string, value: string | null): Store {
+  const next: Store = { ...(prev || {}) };
+  const prevDay = next[day] || undefined;
+  const dayMap: Record<string, string> = { ...(prevDay || {}) };
+
+  if (value == null || String(value).trim().length === 0) {
+    delete dayMap[time];
+  } else {
+    dayMap[time] = String(value).trim();
+  }
+
+  if (Object.keys(dayMap).length === 0) {
+    delete next[day];
+  } else {
+    next[day] = dayMap;
+  }
+
+  return next;
+}
+
 
 const isDayFull = (dayISO: string, store: Store) => {
   const day = store[dayISO];
@@ -321,6 +341,8 @@ const SlotRow = React.memo(
             onKeyDown={(e) => {
               if (e.key === 'Enter') {
                 const el = e.target as HTMLInputElement;
+                // prevent double-save (Enter + blur)
+                el.dataset.orig = el.value;
                 if (canWrite) onSave(dayISO, time, el.value);
                 el.blur();
               }
@@ -659,7 +681,8 @@ function BarberCalendarCore() {
 
       op.tries += 1;
 
-      const ok = op.value == null ? await patchClearSlot(op.day, op.time) : await patchSetSlot(op.day, op.time, op.value);
+      const ok =
+        op.value == null ? await patchClearSlot(op.day, op.time) : await patchSetSlot(op.day, op.time, op.value);
 
       if (!ok) {
         scheduleRetry(op);
@@ -668,11 +691,12 @@ function BarberCalendarCore() {
         continue;
       }
 
-      // PATCH ok: don’t spam GET. Let realtime / next poll confirm. We’ll do one debounced confirm.
-      op.nextAt = Date.now() + 1500;
-      pendingOpsRef.current[key] = op;
+      // PATCH ok:
+      // 1) Remove from queue immediately to prevent PATCH retry spam.
+      // 2) Do a single debounced confirm sync so UI converges even without realtime.
+      delete pendingOpsRef.current[key];
       persistPendingOps();
-      debouncedConfirmSync(1200);
+      debouncedConfirmSync(900);
     }
   }, [persistPendingOps, debouncedConfirmSync]);
 
@@ -709,26 +733,20 @@ function BarberCalendarCore() {
           const oldRow = payload?.old ?? null;
 
           setStore((prev) => {
-            const next: Store = { ...(prev || {}) };
+            let next = prev as Store;
 
-            const applySet = (day: string, time: string, name: string) => {
-              if (!day || !time) return;
-              if (!next[day]) next[day] = {};
-              next[day][time] = name ?? '';
-              if (next[day][time].trim().length === 0) delete next[day][time];
-              if (Object.keys(next[day]).length === 0) delete next[day];
-            };
+            if (ev === 'DELETE') {
+              const d = (oldRow?.day ?? '') as string;
+              const t = (oldRow?.time ?? '') as string;
+              if (d && t) next = updateStoreSlot(next, d, t, null);
+            } else {
+              const d = (newRow?.day ?? '') as string;
+              const t = (newRow?.time ?? '') as string;
+              const nm = ((newRow?.name ?? '') as string).trim();
+              if (d && t) next = updateStoreSlot(next, d, t, nm.length ? nm : null);
+            }
 
-            const applyClear = (day: string, time: string) => {
-              if (!day || !time) return;
-              if (next[day]) {
-                delete next[day][time];
-                if (Object.keys(next[day]).length === 0) delete next[day];
-              }
-            };
-
-            if (ev === 'DELETE') applyClear(oldRow?.day, oldRow?.time);
-            else applySet(newRow?.day, newRow?.time, (newRow?.name ?? '') as string);
+            saveBackup(next);
 
             // Clear pending op if realtime matches it
             try {
@@ -738,9 +756,10 @@ function BarberCalendarCore() {
                 const key = `${day}__${time}`;
                 const op = pendingOpsRef.current[key];
                 if (op) {
+                  const remoteVal = (ev === 'DELETE' ? '' : ((newRow?.name ?? '') as string).trim());
                   const expect = op.value == null ? '' : String(op.value).trim();
-                  const got = ev === 'DELETE' ? '' : String(newRow?.name ?? '').trim();
-                  if (expect === got) {
+                  const matches = op.value == null ? remoteVal.length === 0 : remoteVal === expect;
+                  if (matches) {
                     delete pendingOpsRef.current[key];
                     localStorage.setItem(PENDING_OPS_KEY, JSON.stringify(pendingOpsRef.current));
                   }
@@ -748,7 +767,6 @@ function BarberCalendarCore() {
               }
             } catch {}
 
-            saveBackup(next);
             return next;
           });
 
@@ -986,14 +1004,7 @@ function BarberCalendarCore() {
 
       // optimistic update
       setStore((prev) => {
-        const next: Store = { ...prev };
-        if (!next[day]) next[day] = {};
-        if (name === '') {
-          delete next[day][time];
-          if (Object.keys(next[day]).length === 0) delete next[day];
-        } else {
-          next[day][time] = name;
-        }
+        const next = updateStoreSlot(prev, day, time, name === '' ? null : name);
         saveBackup(next);
         return next;
       });
@@ -1020,11 +1031,7 @@ function BarberCalendarCore() {
       clearArmedTimeout();
 
       setStore((prev) => {
-        const next: Store = { ...prev };
-        if (next[day]) {
-          delete next[day][time];
-          if (Object.keys(next[day]).length === 0) delete next[day];
-        }
+        const next = updateStoreSlot(prev, day, time, null);
         saveBackup(next);
         return next;
       });
