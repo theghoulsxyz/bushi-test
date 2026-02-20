@@ -43,7 +43,7 @@ export async function GET() {
 
     if (error) {
       console.error("GET /api/appointments error:", error);
-      return jsonNoStore({ error: "Failed to fetch appointments" }, 500);
+      return jsonNoStore({}, 200);
     }
 
     const store: Store = {};
@@ -60,7 +60,7 @@ export async function GET() {
     return jsonNoStore(store, 200);
   } catch (e) {
     console.error("GET /api/appointments exception:", e);
-    return jsonNoStore({ error: "Exception while fetching appointments" }, 500);
+    return jsonNoStore({}, 200);
   }
 }
 
