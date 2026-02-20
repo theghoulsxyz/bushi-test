@@ -552,7 +552,7 @@ function BarberCalendarCore() {
   // Prevent fresh remote sync from overwriting a slot we just edited (fixes "text disappears on blur/day switch")
   const pendingWritesRef = useRef<Record<string, { day: string; time: string; value: string | null; exp: number }>>({});
   const markPendingWrite = useCallback((day: string, time: string, value: string | null) => {
-    pendingWritesRef.current[`${day}|${time}`] = { day, time, value, exp: Date.now() + 5000 };
+    pendingWritesRef.current[`${day}|${time}`] = { day, time, value, exp: Date.now() + 20000 };
   }, []);
 
   const cancelledSyncRef = useRef(false);
@@ -655,15 +655,22 @@ function BarberCalendarCore() {
 
   const stopEditing = useCallback(() => {
     if (pendingRemoteRef.current) {
+      const remote = pendingRemoteRef.current;
       pendingRemoteRef.current = null;
+
+      // Apply the newest remote snapshot immediately, but keep any local pending writes.
+      applyRemoteSafely(remote);
+
+      // Give the PATCH a moment to propagate before we re-sync again.
       window.setTimeout(() => {
         syncFromRemote();
-      }, 900);
+      }, 3500);
     }
+
     window.setTimeout(() => {
       editingRef.current = isSlotInputFocused();
     }, 0);
-  }, [syncFromRemote, isSlotInputFocused]);
+  }, [applyRemoteSafely, syncFromRemote, isSlotInputFocused]);
 
   const revealFocus = useCallback((day: string, time: string, inputEl: HTMLInputElement) => {
     window.setTimeout(() => {
