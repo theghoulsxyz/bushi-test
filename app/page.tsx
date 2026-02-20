@@ -730,23 +730,9 @@ function BarberCalendarCore() {
             if (ev === 'DELETE') applyClear(oldRow?.day, oldRow?.time);
             else applySet(newRow?.day, newRow?.time, (newRow?.name ?? '') as string);
 
-            // Clear pending op if realtime matches it
-            try {
-              const day = (ev === 'DELETE' ? oldRow?.day : newRow?.day) as string;
-              const time = (ev === 'DELETE' ? oldRow?.time : newRow?.time) as string;
-              if (day && time) {
-                const key = `${day}__${time}`;
-                const op = pendingOpsRef.current[key];
-                if (op) {
-                  const expect = op.value == null ? '' : String(op.value).trim();
-                  const got = ev === 'DELETE' ? '' : String(newRow?.name ?? '').trim();
-                  if (expect === got) {
-                    delete pendingOpsRef.current[key];
-                    localStorage.setItem(PENDING_OPS_KEY, JSON.stringify(pendingOpsRef.current));
-                  }
-                }
-              }
-            } catch {}
+            // Keep pending ops until a GET confirms them.
+            // Realtime can arrive before read replicas / caches converge.
+            // If we clear too early, a stale GET can wipe recent local edits.
 
             saveBackup(next);
             return next;
@@ -830,7 +816,6 @@ function BarberCalendarCore() {
 
   const flushActiveSlotDraft = useCallback(
     (saveNameFn: (day: string, time: string, nameRaw: string) => void) => {
-      if (!remoteReady) return;
       if (typeof document === 'undefined') return;
       const el = document.activeElement as HTMLInputElement | null;
       if (!el) return;
@@ -848,7 +833,7 @@ function BarberCalendarCore() {
       el.dataset.orig = el.value;
       saveNameFn(day, time, el.value);
     },
-    [remoteReady]
+    []
   );
 
   // =============================================================================
@@ -980,7 +965,6 @@ function BarberCalendarCore() {
   // SAVE / DELETE
   const saveName = useCallback(
     (day: string, time: string, nameRaw: string) => {
-      if (!remoteReady) return;
       const name = nameRaw.trim();
       clearArmedTimeout();
 
@@ -1011,12 +995,11 @@ function BarberCalendarCore() {
 
       setArmedRemove(null);
     },
-    [clearArmedTimeout, remoteReady, enqueuePendingOp, pumpPendingOpsOnce]
+    [clearArmedTimeout, enqueuePendingOp, pumpPendingOpsOnce]
   );
 
   const confirmRemove = useCallback(
     (day: string, time: string) => {
-      if (!remoteReady) return;
       clearArmedTimeout();
 
       setStore((prev) => {
@@ -1036,7 +1019,7 @@ function BarberCalendarCore() {
 
       setArmedRemove(null);
     },
-    [clearArmedTimeout, remoteReady, enqueuePendingOp, pumpPendingOpsOnce]
+    [clearArmedTimeout, enqueuePendingOp, pumpPendingOpsOnce]
   );
 
   // Day swipe logic
