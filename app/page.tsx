@@ -732,6 +732,15 @@ const cancelledSyncRef = useRef(false);
 
 
 
+
+  const isSlotInputFocused = useCallback(() => {
+    if (typeof document === 'undefined') return false;
+    const el = document.activeElement as HTMLElement | null;
+    if (!el) return false;
+    const id = (el as any).id as string | undefined;
+    return typeof id === 'string' && id.startsWith('slot_');
+  }, []);
+
   useEffect(() => {
     cancelledSyncRef.current = false;
     let interval: number | null = null;
