@@ -549,6 +549,12 @@ function BarberCalendarCore() {
   const editingRef = useRef(false);
   const pendingRemoteRef = useRef<Store | null>(null);
 
+  // Prevent fresh remote sync from overwriting a slot we just edited (fixes "text disappears on blur/day switch")
+  const pendingWritesRef = useRef<Record<string, { day: string; time: string; value: string | null; exp: number }>>({});
+  const markPendingWrite = useCallback((day: string, time: string, value: string | null) => {
+    pendingWritesRef.current[`${day}|${time}`] = { day, time, value, exp: Date.now() + 5000 };
+  }, []);
+
   const cancelledSyncRef = useRef(false);
   const syncingRef = useRef(false);
   const swallowNextClickRef = useRef(false);
@@ -562,13 +568,44 @@ function BarberCalendarCore() {
 
   const applyRemoteSafely = useCallback((remote: Store) => {
     saveBackup(remote);
+
+    // Merge remote with any very recent local edits so the UI doesn't "revert" on blur/day change
+    const now = Date.now();
+    const pending = pendingWritesRef.current;
+
+    // cleanup expired
+    for (const k of Object.keys(pending)) {
+      if (pending[k].exp <= now) delete pending[k];
+    }
+
+    let merged: Store = remote;
+
+    const pendVals = Object.values(pending);
+    if (pendVals.length) {
+      merged = { ...remote };
+      for (const p of pendVals) {
+        if (!p || p.day == null || p.time == null) continue;
+
+        if (p.value == null || p.value.trim() === '') {
+          if (merged[p.day]) {
+            const dayMap = { ...merged[p.day] };
+            delete dayMap[p.time];
+            if (Object.keys(dayMap).length === 0) delete (merged as any)[p.day];
+            else merged[p.day] = dayMap;
+          }
+        } else {
+          merged[p.day] = { ...(merged[p.day] || {}), [p.time]: p.value };
+        }
+      }
+    }
+
     if (editingRef.current) {
-      pendingRemoteRef.current = remote;
+      pendingRemoteRef.current = merged;
       return;
     }
     pendingRemoteRef.current = null;
-    setStore(remote);
-  }, []);
+    setStore(merged);
+  }, [markPendingWrite]);
 
   const syncFromRemote = useCallback(async () => {
     if (syncingRef.current) return;
@@ -768,6 +805,7 @@ function BarberCalendarCore() {
       if (!remoteReady) return;
       const name = nameRaw.trim();
       clearArmedTimeout();
+      markPendingWrite(day, time, name === '' ? null : name);
 
       setStore((prev) => {
         const next: Store = { ...prev };
@@ -794,13 +832,14 @@ function BarberCalendarCore() {
 
       setArmedRemove(null);
     },
-    [clearArmedTimeout, remoteReady]
+    [clearArmedTimeout, remoteReady, markPendingWrite]
   );
 
   const confirmRemove = useCallback(
     (day: string, time: string) => {
       if (!remoteReady) return;
       clearArmedTimeout();
+      markPendingWrite(day, time, null);
 
       setStore((prev) => {
         const next: Store = { ...prev };
@@ -815,7 +854,7 @@ function BarberCalendarCore() {
       patchClearSlot(day, time);
       setArmedRemove(null);
     },
-    [clearArmedTimeout, remoteReady]
+    [clearArmedTimeout, remoteReady, markPendingWrite]
   );
 
   // FIX V10: Flush the currently focused slot input (covers iOS tap-outside / swipe-day cases)
