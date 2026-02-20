@@ -100,22 +100,6 @@ function isTypingTarget(el: Element | null) {
 const slotInputId = (dayISO: string, time: string) =>
   `slot_${dayISO.replace(/[^0-9]/g, '')}_${time.replace(/[^0-9]/g, '')}`;
 
-// Canonicalize time keys so UI keys and DB keys always match
-function normalizeTime(t: string) {
-  const s = String(t ?? '').trim();
-  // Accept "08:30", "8:30", "08:30:00" etc -> "HH:MM"
-  const m1 = /^(\d{1,2}):(\d{2})$/.exec(s);
-  if (m1) return `${m1[1].padStart(2, '0')}:${m1[2]}`;
-  const m2 = /^(\d{1,2}):(\d{2}):\d{2}$/.exec(s);
-  if (m2) return `${m2[1].padStart(2, '0')}:${m2[2]}`;
-  return s;
-}
-
-function cleanName(input: string) {
-  // Prevent stray whitespace / hidden chars; keep it simple & predictable.
-  return String(input ?? '').trim();
-}
-
 // =============================================================================
 // Constants
 // =============================================================================
@@ -151,27 +135,6 @@ function buildSlots() {
 const DAY_SLOTS = buildSlots();
 
 type Store = Record<string, Record<string, string>>;
-function updateStoreSlot(prev: Store, day: string, time: string, value: string | null): Store {
-  const dayKey = String(day ?? '').trim();
-  const timeKey = normalizeTime(time);
-  const next: Store = { ...(prev || {}) };
-  const prevDay = next[dayKey] || undefined;
-  const dayMap: Record<string, string> = { ...(prevDay || {}) };
-
-  if (value == null || String(value).trim().length === 0) {
-    delete dayMap[timeKey];
-  } else {
-    dayMap[timeKey] = cleanName(String(value));
-  }
-
-  if (Object.keys(dayMap).length === 0) {
-    delete next[dayKey];
-  } else {
-    next[dayKey] = dayMap;
-  }
-
-  return next;
-}
 
 const isDayFull = (dayISO: string, store: Store) => {
   const day = store[dayISO];
@@ -229,7 +192,7 @@ async function patchSetSlot(day: string, time: string, name: string): Promise<bo
       cache: 'no-store',
       keepalive: true as any,
       headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
-      body: JSON.stringify({ op: 'set', day: String(day ?? '').trim(), time: normalizeTime(time), name: cleanName(name) }),
+      body: JSON.stringify({ op: 'set', day, time, name }),
     });
     return res.ok;
   } catch {
@@ -244,7 +207,7 @@ async function patchClearSlot(day: string, time: string): Promise<boolean> {
       cache: 'no-store',
       keepalive: true as any,
       headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
-      body: JSON.stringify({ op: 'clear', day: String(day ?? '').trim(), time: normalizeTime(time) }),
+      body: JSON.stringify({ op: 'clear', day, time }),
     });
     return res.ok;
   } catch {
@@ -351,34 +314,20 @@ const SlotRow = React.memo(
             data-time={time}
             onFocus={(e) => {
               focusedRef.current = true;
-              // "orig" used to detect changes; always set on focus
               e.currentTarget.dataset.orig = e.currentTarget.value;
-              delete (e.currentTarget as any).dataset.savedByEnter;
               onStartEditing();
               onRevealFocus(dayISO, time, e.currentTarget);
             }}
             onKeyDown={(e) => {
               if (e.key === 'Enter') {
-                e.preventDefault();
-                const el = e.currentTarget as any as HTMLInputElement;
-                // prevent double-save (Enter + blur)
-                (el as any).dataset.savedByEnter = '1';
-                el.dataset.orig = el.value; // make blur think nothing changed
+                const el = e.target as HTMLInputElement;
                 if (canWrite) onSave(dayISO, time, el.value);
                 el.blur();
               }
             }}
             onBlur={(e) => {
               focusedRef.current = false;
-              const el = e.currentTarget as any as HTMLInputElement;
-
-              // If Enter already handled the save, blur should not resave
-              if ((el as any).dataset.savedByEnter === '1') {
-                delete (el as any).dataset.savedByEnter;
-                window.setTimeout(onStopEditing, 120);
-                return;
-              }
-
+              const el = e.currentTarget;
               const orig = (el.dataset.orig ?? '').trim();
               const now = (el.value ?? '').trim();
 
@@ -603,12 +552,10 @@ function BarberCalendarCore() {
 
   const enqueuePendingOp = useCallback(
     (day: string, time: string, value: string | null) => {
-      const d = String(day ?? '').trim();
-      const t = normalizeTime(time);
-      const key = `${d}__${t}`;
+      const key = `${day}__${time}`;
       const now = Date.now();
       const existing = pendingOpsRef.current[key];
-      pendingOpsRef.current[key] = { day: d, time: t, value: value == null ? null : cleanName(value), tries: existing?.tries ?? 0, nextAt: now };
+      pendingOpsRef.current[key] = { day, time, value, tries: existing?.tries ?? 0, nextAt: now };
       persistPendingOps();
     },
     [persistPendingOps]
@@ -628,64 +575,45 @@ function BarberCalendarCore() {
 
   const syncFromRemoteRef = useRef<(force?: boolean) => void>(() => {});
 
-  const normalizeRemoteStore = useCallback((remote: Store): Store => {
-    const out: Store = {};
-    for (const [dayKeyRaw, dayMapRaw] of Object.entries(remote || {})) {
-      const dayKey = String(dayKeyRaw ?? '').trim();
-      if (!dayKey) continue;
-      const dayMap: Record<string, string> = {};
-      for (const [timeRaw, nameRaw] of Object.entries(dayMapRaw || {})) {
-        const t = normalizeTime(timeRaw);
-        const n = cleanName(String(nameRaw ?? ''));
-        if (!t) continue;
-        if (!n) continue;
-        dayMap[t] = n;
-      }
-      if (Object.keys(dayMap).length > 0) out[dayKey] = dayMap;
-    }
-    return out;
-  }, []);
+  const applyRemoteSafely = useCallback((remote: Store) => {
+    saveBackup(remote);
 
-  const applyRemoteSafely = useCallback(
-    (remote0: Store) => {
-      const remote = normalizeRemoteStore(remote0 || {});
-      saveBackup(remote);
+    setStore(() => {
+      const merged: Store = JSON.parse(JSON.stringify(remote || {}));
 
-      setStore(() => {
-        const merged: Store = JSON.parse(JSON.stringify(remote || {}));
+      // Apply pending ops on top of remote so it can’t erase our local changes
+      for (const [k, op] of Object.entries(pendingOpsRef.current)) {
+        if (!op) continue;
+        // If we've already retried many times, stop overriding the server forever.
+        if ((op as any).tries >= 6) {
+          delete pendingOpsRef.current[k];
+          continue;
+        }
+        const { day, time, value } = op;
 
-        // Apply pending ops on top of remote so it can’t erase our local changes
-        for (const [k, op] of Object.entries(pendingOpsRef.current)) {
-          if (!op) continue;
-          const day = String(op.day ?? '').trim();
-          const time = normalizeTime(op.time);
-          const value = op.value;
-
-          if (value == null || String(value).trim().length === 0) {
-            if (merged[day]) {
-              delete merged[day][time];
-              if (Object.keys(merged[day]).length === 0) delete merged[day];
-            }
-          } else {
-            if (!merged[day]) merged[day] = {};
-            merged[day][time] = cleanName(String(value));
+        if (value == null || String(value).trim().length === 0) {
+          if (merged[day]) {
+            delete merged[day][time];
+            if (Object.keys(merged[day]).length === 0) delete merged[day];
           }
-
-          const remoteVal = ((remote?.[day]?.[time] ?? '') as string).trim();
-          const expect = value == null ? '' : cleanName(String(value));
-          const matches = value == null ? remoteVal.length === 0 : remoteVal === expect;
-          if (matches) delete pendingOpsRef.current[k];
+        } else {
+          if (!merged[day]) merged[day] = {};
+          merged[day][time] = String(value).trim();
         }
 
-        try {
-          localStorage.setItem(PENDING_OPS_KEY, JSON.stringify(pendingOpsRef.current));
-        } catch {}
+        const remoteVal = ((remote?.[day]?.[time] ?? '') as string).trim();
+        const expect = value == null ? '' : String(value).trim();
+        const matches = value == null ? remoteVal.length === 0 : remoteVal === expect;
+        if (matches) delete pendingOpsRef.current[k];
+      }
 
-        return merged;
-      });
-    },
-    [normalizeRemoteStore]
-  );
+      try {
+        localStorage.setItem(PENDING_OPS_KEY, JSON.stringify(pendingOpsRef.current));
+      } catch {}
+
+      return merged;
+    });
+  }, []);
 
   const syncFromRemote = useCallback(
     async (force: boolean = false) => {
@@ -732,7 +660,12 @@ function BarberCalendarCore() {
       const op = op0 as PendingOp | undefined;
       if (!op) continue;
       if (op.nextAt > now) continue;
-      if (op.tries >= 6) continue;
+      if (op.tries >= 6) {
+        // Give up: do NOT keep a permanent local override that hides server data.
+        delete pendingOpsRef.current[key];
+        persistPendingOps();
+        continue;
+      }
 
       op.tries += 1;
 
@@ -745,12 +678,11 @@ function BarberCalendarCore() {
         continue;
       }
 
-      // PATCH ok:
-      // 1) Remove from queue immediately to prevent PATCH retry spam.
-      // 2) Do a single debounced confirm sync so UI converges even without realtime.
-      delete pendingOpsRef.current[key];
+      // PATCH ok: don’t spam GET. Let realtime / next poll confirm. We’ll do one debounced confirm.
+      op.nextAt = Date.now() + 1500;
+      pendingOpsRef.current[key] = op;
       persistPendingOps();
-      debouncedConfirmSync(900);
+      debouncedConfirmSync(1200);
     }
   }, [persistPendingOps, debouncedConfirmSync]);
 
@@ -787,33 +719,38 @@ function BarberCalendarCore() {
           const oldRow = payload?.old ?? null;
 
           setStore((prev) => {
-            let next = prev as Store;
+            const next: Store = { ...(prev || {}) };
 
-            if (ev === 'DELETE') {
-              const d = String(oldRow?.day ?? '').trim();
-              const t = normalizeTime(String(oldRow?.time ?? ''));
-              if (d && t) next = updateStoreSlot(next, d, t, null);
-            } else {
-              const d = String(newRow?.day ?? '').trim();
-              const t = normalizeTime(String(newRow?.time ?? ''));
-              const nm = cleanName(String(newRow?.name ?? ''));
-              if (d && t) next = updateStoreSlot(next, d, t, nm.length ? nm : null);
-            }
+            const applySet = (day: string, time: string, name: string) => {
+              if (!day || !time) return;
+              if (!next[day]) next[day] = {};
+              next[day][time] = name ?? '';
+              if (next[day][time].trim().length === 0) delete next[day][time];
+              if (Object.keys(next[day]).length === 0) delete next[day];
+            };
 
-            saveBackup(next);
+            const applyClear = (day: string, time: string) => {
+              if (!day || !time) return;
+              if (next[day]) {
+                delete next[day][time];
+                if (Object.keys(next[day]).length === 0) delete next[day];
+              }
+            };
+
+            if (ev === 'DELETE') applyClear(oldRow?.day, oldRow?.time);
+            else applySet(newRow?.day, newRow?.time, (newRow?.name ?? '') as string);
 
             // Clear pending op if realtime matches it
             try {
-              const day = String((ev === 'DELETE' ? oldRow?.day : newRow?.day) ?? '').trim();
-              const time = normalizeTime(String((ev === 'DELETE' ? oldRow?.time : newRow?.time) ?? ''));
+              const day = (ev === 'DELETE' ? oldRow?.day : newRow?.day) as string;
+              const time = (ev === 'DELETE' ? oldRow?.time : newRow?.time) as string;
               if (day && time) {
                 const key = `${day}__${time}`;
                 const op = pendingOpsRef.current[key];
                 if (op) {
-                  const remoteVal = ev === 'DELETE' ? '' : cleanName(String(newRow?.name ?? ''));
-                  const expect = op.value == null ? '' : cleanName(String(op.value));
-                  const matches = op.value == null ? remoteVal.length === 0 : remoteVal === expect;
-                  if (matches) {
+                  const expect = op.value == null ? '' : String(op.value).trim();
+                  const got = ev === 'DELETE' ? '' : String(newRow?.name ?? '').trim();
+                  if (expect === got) {
                     delete pendingOpsRef.current[key];
                     localStorage.setItem(PENDING_OPS_KEY, JSON.stringify(pendingOpsRef.current));
                   }
@@ -821,6 +758,7 @@ function BarberCalendarCore() {
               }
             } catch {}
 
+            saveBackup(next);
             return next;
           });
 
@@ -910,7 +848,7 @@ function BarberCalendarCore() {
       if (typeof id !== 'string' || !id.startsWith('slot_')) return;
 
       const day = (el.dataset?.dayiso || '').trim();
-      const time = normalizeTime((el.dataset?.time || '').trim());
+      const time = (el.dataset?.time || '').trim();
       if (!day || !time) return;
 
       const orig = ((el.dataset?.orig ?? '') as string).trim();
@@ -1053,28 +991,32 @@ function BarberCalendarCore() {
   const saveName = useCallback(
     (day: string, time: string, nameRaw: string) => {
       if (!remoteReady) return;
-
-      const d = String(day ?? '').trim();
-      const t = normalizeTime(time);
-      const name = cleanName(nameRaw);
+      const name = nameRaw.trim();
       clearArmedTimeout();
 
       // optimistic update
       setStore((prev) => {
-        const next = updateStoreSlot(prev, d, t, name === '' ? null : name);
+        const next: Store = { ...prev };
+        if (!next[day]) next[day] = {};
+        if (name === '') {
+          delete next[day][time];
+          if (Object.keys(next[day]).length === 0) delete next[day];
+        } else {
+          next[day][time] = name;
+        }
         saveBackup(next);
         return next;
       });
 
       // queue + send
-      enqueuePendingOp(d, t, name === '' ? null : name);
+      enqueuePendingOp(day, time, name === '' ? null : name);
       window.setTimeout(() => {
         pumpPendingOpsOnce();
       }, 0);
 
-      setSavedPulse({ day: d, time: t, ts: Date.now() });
+      setSavedPulse({ day, time, ts: Date.now() });
       setTimeout(() => {
-        setSavedPulse((p) => (p && p.day === d && p.time === t ? null : p));
+        setSavedPulse((p) => (p && p.day === day && p.time === time ? null : p));
       }, 900);
 
       setArmedRemove(null);
@@ -1085,19 +1027,19 @@ function BarberCalendarCore() {
   const confirmRemove = useCallback(
     (day: string, time: string) => {
       if (!remoteReady) return;
-
-      const d = String(day ?? '').trim();
-      const t = normalizeTime(time);
-
       clearArmedTimeout();
 
       setStore((prev) => {
-        const next = updateStoreSlot(prev, d, t, null);
+        const next: Store = { ...prev };
+        if (next[day]) {
+          delete next[day][time];
+          if (Object.keys(next[day]).length === 0) delete next[day];
+        }
         saveBackup(next);
         return next;
       });
 
-      enqueuePendingOp(d, t, null);
+      enqueuePendingOp(day, time, null);
       window.setTimeout(() => {
         pumpPendingOpsOnce();
       }, 0);
@@ -1728,20 +1670,7 @@ function BarberCalendarCore() {
         revealFocus,
       };
     },
-    [
-      store,
-      keyboardInset,
-      remoteReady,
-      savedPulse,
-      armedRemove,
-      highlight,
-      startEditing,
-      stopEditing,
-      saveName,
-      armRemove,
-      confirmRemove,
-      revealFocus,
-    ]
+    [store, keyboardInset, remoteReady, savedPulse, armedRemove, highlight, startEditing, stopEditing, saveName, armRemove, confirmRemove, revealFocus]
   );
 
   return (
@@ -1776,10 +1705,7 @@ function BarberCalendarCore() {
         </div>
 
         {/* Weekdays */}
-        <div
-          className="mt-[clamp(12px,2.8vw,28px)] grid grid-cols-7 gap-[clamp(6px,1.2vw,16px)] text-center"
-          style={{ fontFamily: BRAND.fontTitle }}
-        >
+        <div className="mt-[clamp(12px,2.8vw,28px)] grid grid-cols-7 gap-[clamp(6px,1.2vw,16px)] text-center" style={{ fontFamily: BRAND.fontTitle }}>
           {WEEKDAYS_SHORT.map((d, idx) => {
             const isSat = idx === 5;
             const isSun = idx === 6;
@@ -1823,11 +1749,7 @@ function BarberCalendarCore() {
             const cls = [
               'rounded-2xl flex items-center justify-center bg-neutral-900 text-white border transition cursor-pointer',
               'h-full w-full aspect-square md:aspect-auto p-[clamp(6px,1vw,20px)] focus:outline-none',
-              !inMonth
-                ? 'border-neutral-800 opacity-40 hover:opacity-70'
-                : isToday
-                  ? 'border-white/70 ring-2 ring-white/20'
-                  : 'border-neutral-700 hover:border-white/60',
+              !inMonth ? 'border-neutral-800 opacity-40 hover:opacity-70' : isToday ? 'border-white/70 ring-2 ring-white/20' : 'border-neutral-700 hover:border-white/60',
             ].join(' ');
 
             return (
@@ -1840,10 +1762,7 @@ function BarberCalendarCore() {
                 className={cls}
               >
                 <div className="flex flex-col items-center justify-center gap-2 w-full">
-                  <span
-                    className={`select-none text-[clamp(17px,3.5vw,32px)] ${isToday ? 'font-extrabold' : ''}`}
-                    style={{ fontFamily: BRAND.fontNumbers }}
-                  >
+                  <span className={`select-none text-[clamp(17px,3.5vw,32px)] ${isToday ? 'font-extrabold' : ''}`} style={{ fontFamily: BRAND.fontNumbers }}>
                     {inMonth && full ? 'X' : num}
                   </span>
                   {showBar && (
@@ -2070,12 +1989,7 @@ function BarberCalendarCore() {
               <div
                 ref={dayHostRefIOS}
                 className="flex-1 w-full min-h-0 overflow-hidden"
-                style={{
-                  touchAction: 'pan-y',
-                  WebkitTapHighlightColor: 'transparent',
-                  WebkitUserSelect: 'none' as any,
-                  userSelect: 'none' as any,
-                }}
+                style={{ touchAction: 'pan-y', WebkitTapHighlightColor: 'transparent', WebkitUserSelect: 'none' as any, userSelect: 'none' as any }}
                 onPointerDownCapture={onIOSPointerDown}
                 onPointerMoveCapture={onIOSPointerMove}
                 onPointerUpCapture={onIOSPointerUp}
