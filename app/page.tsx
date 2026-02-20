@@ -4,7 +4,7 @@
 // FIX V7: Added translateZ(0) to fix iOS "cut off" rendering bug.
 // FIX V8: Removed 'touch-action: pan-y' to restore Horizontal Swipe.
 // FIX V9: Added "Double Layer Promotion" (translateZ on inner div) + minHeight% to force iOS Paint.
-// FIX V10: iOS Draft-Save Guard — preserves typed text when tapping outside or swiping days (save-on-blur + save-on-unmount + flush-before-day-change).
+// FIX V12: Durable Write Queue — prevents server poll/race from wiping saved names; retries PATCH until server confirms.
 
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
@@ -548,14 +548,117 @@ function BarberCalendarCore() {
 
   const editingRef = useRef(false);
   const pendingRemoteRef = useRef<Store | null>(null);
+  const syncFromRemoteRef = useRef<(force?: boolean) => void>(() => {});
 
   // Prevent fresh remote sync from overwriting a slot we just edited (fixes "text disappears on blur/day switch")
-  const pendingWritesRef = useRef<Record<string, { day: string; time: string; value: string | null; exp: number }>>({});
-  const markPendingWrite = useCallback((day: string, time: string, value: string | null) => {
-    pendingWritesRef.current[`${day}|${time}`] = { day, time, value, exp: Date.now() + 20000 };
+    // Pending ops queue (prevents server poll from wiping optimistic edits)
+  // We keep local optimistic values and retry PATCH until the server confirms them.
+  type PendingOp = {
+    day: string;
+    time: string;
+    value: string | null; // null = clear
+    tries: number;
+    nextAt: number;
+  };
+
+  const PENDING_OPS_KEY = 'bushi_pending_ops_v1';
+  const pendingOpsRef = useRef<Record<string, PendingOp>>({});
+
+  const persistPendingOps = useCallback(() => {
+    try {
+      localStorage.setItem(PENDING_OPS_KEY, JSON.stringify(pendingOpsRef.current));
+    } catch {}
   }, []);
 
-  const cancelledSyncRef = useRef(false);
+  // Load pending ops once
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const raw = localStorage.getItem(PENDING_OPS_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') {
+        pendingOpsRef.current = parsed;
+      }
+    } catch {}
+  }, []);
+
+  const enqueuePendingOp = useCallback(
+    (day: string, time: string, value: string | null) => {
+      const key = `${day}__${time}`;
+      const now = Date.now();
+      const existing = pendingOpsRef.current[key];
+
+      pendingOpsRef.current[key] = {
+        day,
+        time,
+        value,
+        tries: existing?.tries ?? 0,
+        nextAt: now, // try immediately
+      };
+      persistPendingOps();
+    },
+    [persistPendingOps],
+  );
+
+  const scheduleRetry = (op: PendingOp) => {
+    // simple exponential backoff: 500ms, 1s, 2s, 4s, 8s (cap)
+    const base = 500;
+    const delay = Math.min(8000, base * Math.pow(2, Math.min(op.tries, 4)));
+    op.nextAt = Date.now() + delay;
+  };
+
+  const pumpPendingOpsOnce = useCallback(async () => {
+    if (typeof window === 'undefined') return;
+    if (!navigator.onLine) return;
+
+    const now = Date.now();
+    const entries = Object.entries(pendingOpsRef.current);
+    if (entries.length === 0) return;
+
+    for (const [key, op0] of entries) {
+      const op = op0 as PendingOp | undefined;
+      if (!op) continue;
+      if (op.nextAt > now) continue;
+      if (op.tries >= 6) continue;
+
+      op.tries += 1;
+
+      const ok = op.value == null ? await patchClearSlot(op.day, op.time) : await patchSetSlot(op.day, op.time, op.value);
+
+      if (!ok) {
+        scheduleRetry(op);
+        pendingOpsRef.current[key] = op;
+        persistPendingOps();
+        continue;
+      }
+
+      // PATCH ok — keep op until the next GET confirms it (applyRemoteSafely will clear it)
+      // but do a quick sync soon to speed up confirmation.
+      op.nextAt = Date.now() + 700;
+      pendingOpsRef.current[key] = op;
+      persistPendingOps();
+      window.setTimeout(() => {
+        syncFromRemoteRef.current(true);
+      }, 250);
+    }
+  }, [persistPendingOps]);
+
+  // Background pump while the app is open
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const t = window.setInterval(() => {
+      pumpPendingOpsOnce();
+    }, 1500);
+    const onOnline = () => pumpPendingOpsOnce();
+    window.addEventListener('online', onOnline);
+    return () => {
+      window.clearInterval(t);
+      window.removeEventListener('online', onOnline);
+    };
+  }, [pumpPendingOpsOnce]);
+
+const cancelledSyncRef = useRef(false);
   const syncingRef = useRef(false);
   const swallowNextClickRef = useRef(false);
 
@@ -569,46 +672,49 @@ function BarberCalendarCore() {
   const applyRemoteSafely = useCallback((remote: Store) => {
     saveBackup(remote);
 
-    // Merge remote with any very recent local edits so the UI doesn't "revert" on blur/day change
-    const now = Date.now();
-    const pending = pendingWritesRef.current;
-
-    // cleanup expired
-    for (const k of Object.keys(pending)) {
-      if (pending[k].exp <= now) delete pending[k];
-    }
-
-    let merged: Store = remote;
-
-    const pendVals = Object.values(pending);
-    if (pendVals.length) {
-      merged = { ...remote };
-      for (const p of pendVals) {
-        if (!p || p.day == null || p.time == null) continue;
-
-        if (p.value == null || p.value.trim() === '') {
-          if (merged[p.day]) {
-            const dayMap = { ...merged[p.day] };
-            delete dayMap[p.time];
-            if (Object.keys(dayMap).length === 0) delete (merged as any)[p.day];
-            else merged[p.day] = dayMap;
-          }
-        } else {
-          merged[p.day] = { ...(merged[p.day] || {}), [p.time]: p.value };
-        }
-      }
-    }
-
     if (editingRef.current) {
-      pendingRemoteRef.current = merged;
+      pendingRemoteRef.current = remote;
       return;
     }
-    pendingRemoteRef.current = null;
-    setStore(merged);
-  }, [markPendingWrite]);
 
-  const syncFromRemote = useCallback(async () => {
-    if (syncingRef.current) return;
+    // Merge remote with our optimistic pending ops so polling can't "erase" saved names.
+    setStore((prev) => {
+      const merged: Store = JSON.parse(JSON.stringify(remote || {}));
+
+      for (const [k, op] of Object.entries(pendingOpsRef.current)) {
+        if (!op) continue;
+        const { day, time, value } = op as any;
+
+        // apply our local expectation on top of remote
+        if (value == null || String(value).trim().length === 0) {
+          if (merged[day]) {
+            delete merged[day][time];
+            if (Object.keys(merged[day]).length === 0) delete merged[day];
+          }
+        } else {
+          if (!merged[day]) merged[day] = {};
+          merged[day][time] = String(value).trim();
+        }
+
+        // if server already matches, clear op
+        const remoteVal = ((remote?.[day]?.[time] ?? '') as string).trim();
+        const expect = value == null ? '' : String(value).trim();
+        const matches = value == null ? remoteVal.length === 0 : remoteVal === expect;
+        if (matches) delete pendingOpsRef.current[k];
+      }
+
+      try {
+        localStorage.setItem(PENDING_OPS_KEY, JSON.stringify(pendingOpsRef.current));
+      } catch {}
+
+      return merged;
+    });
+
+    pendingRemoteRef.current = null;
+  }, []);
+
+  const syncFromRemote = useCallback(async (force: boolean = false) => {
+    if (syncingRef.current && !force) return;
     syncingRef.current = true;
     try {
       const remote = await fetchRemoteStore();
@@ -620,13 +726,11 @@ function BarberCalendarCore() {
     }
   }, [applyRemoteSafely]);
 
-  const isSlotInputFocused = useCallback(() => {
-    if (typeof document === 'undefined') return false;
-    const el = document.activeElement as HTMLElement | null;
-    if (!el) return false;
-    const id = (el as any).id as string | undefined;
-    return typeof id === 'string' && id.startsWith('slot_');
-  }, []);
+  useEffect(() => {
+    syncFromRemoteRef.current = syncFromRemote;
+  }, [syncFromRemote]);
+
+
 
   useEffect(() => {
     cancelledSyncRef.current = false;
@@ -812,8 +916,11 @@ function BarberCalendarCore() {
       if (!remoteReady) return;
       const name = nameRaw.trim();
       clearArmedTimeout();
-      markPendingWrite(day, time, name === '' ? null : name);
+      enqueuePendingOp(day, time, name === '' ? null : name);
 
+      window.setTimeout(() => {
+        pumpPendingOpsOnce();
+      }, 0);
       setStore((prev) => {
         const next: Store = { ...prev };
         if (!next[day]) next[day] = {};
@@ -839,15 +946,18 @@ function BarberCalendarCore() {
 
       setArmedRemove(null);
     },
-    [clearArmedTimeout, remoteReady, markPendingWrite]
+    [clearArmedTimeout, remoteReady, enqueuePendingOp, pumpPendingOpsOnce]
   );
 
   const confirmRemove = useCallback(
     (day: string, time: string) => {
       if (!remoteReady) return;
       clearArmedTimeout();
-      markPendingWrite(day, time, null);
+      enqueuePendingOp(day, time, null);
 
+      window.setTimeout(() => {
+        pumpPendingOpsOnce();
+      }, 0);
       setStore((prev) => {
         const next: Store = { ...prev };
         if (next[day]) {
@@ -857,11 +967,9 @@ function BarberCalendarCore() {
         saveBackup(next);
         return next;
       });
-
-      patchClearSlot(day, time);
       setArmedRemove(null);
     },
-    [clearArmedTimeout, remoteReady, markPendingWrite]
+    [clearArmedTimeout, remoteReady, enqueuePendingOp, pumpPendingOpsOnce]
   );
 
   // FIX V10: Flush the currently focused slot input (covers iOS tap-outside / swipe-day cases)
