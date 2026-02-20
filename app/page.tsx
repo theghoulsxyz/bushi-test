@@ -859,26 +859,28 @@ const cancelledSyncRef = useRef(false);
     return typeof id === 'string' && id.startsWith('slot_');
   }, []);
 
-  useEffect(() => {
-    cancelledSyncRef.current = false;
-    let interval: number | null = null;
+useEffect(() => {
+  cancelledSyncRef.current = false;
 
-    (async () => {
-      await syncFromRemote();
-      interval = window.setInterval(syncFromRemote, 60000);
-    })();
+  (async () => {
+    await syncFromRemote(true); // load once
+  })();
 
-    const handleVisibility = () => {
-      if (document.visibilityState === 'visible') syncFromRemote();
-    };
-    document.addEventListener('visibilitychange', handleVisibility);
+  // TEMP TEST: disable polling + visibility refresh
+  // let interval: number | null = null;
+  // interval = window.setInterval(syncFromRemote, 60000);
 
-    return () => {
-      cancelledSyncRef.current = true;
-      document.removeEventListener('visibilitychange', handleVisibility);
-      if (interval != null) window.clearInterval(interval);
-    };
-  }, [syncFromRemote, isSlotInputFocused]);
+  // const handleVisibility = () => {
+  //   if (document.visibilityState === 'visible') syncFromRemote();
+  // };
+  // document.addEventListener('visibilitychange', handleVisibility);
+
+  return () => {
+    cancelledSyncRef.current = true;
+    // document.removeEventListener('visibilitychange', handleVisibility);
+    // if (interval != null) window.clearInterval(interval);
+  };
+}, [syncFromRemote]);
 
   const startEditing = useCallback(() => {
     editingRef.current = true;
