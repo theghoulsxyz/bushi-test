@@ -4,6 +4,7 @@
 // FIX V7: Added translateZ(0) to fix iOS "cut off" rendering bug.
 // FIX V8: Removed 'touch-action: pan-y' to restore Horizontal Swipe.
 // FIX V9: Added "Double Layer Promotion" (translateZ on inner div) + minHeight% to force iOS Paint.
+// FIX V10: iOS Draft-Save Guard — preserves typed text when tapping outside or swiping days (save-on-blur + save-on-unmount + flush-before-day-change).
 
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
@@ -27,7 +28,6 @@ const IS_IOS =
   typeof navigator !== 'undefined' &&
   (/iPad|iPhone|iPod/.test(navigator.userAgent || '') ||
     (navigator.platform === 'MacIntel' && (navigator as any).maxTouchPoints > 1));
-
 
 function injectBrandFonts() {
   if (typeof document === 'undefined') return;
@@ -72,14 +72,11 @@ function injectBushiStyles() {
 // =============================================================================
 const pad = (n: number) => (n < 10 ? `0${n}` : `${n}`);
 
-const toISODate = (d: Date) =>
-  `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const toISODate = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 
-const addDays = (d: Date, delta: number) =>
-  new Date(d.getFullYear(), d.getMonth(), d.getDate() + delta);
+const addDays = (d: Date, delta: number) => new Date(d.getFullYear(), d.getMonth(), d.getDate() + delta);
 
-const clamp = (v: number, min: number, max: number) =>
-  Math.max(min, Math.min(max, v));
+const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
 
 function monthMatrix(year: number, month: number) {
   const first = new Date(year, month, 1);
@@ -112,15 +109,7 @@ const slotInputId = (dayISO: string, time: string) =>
 // Constants
 // =============================================================================
 const WEEKDAYS_SHORT = ['Пон', 'Вто', 'Сря', 'Чет', 'Пет', 'Съб', 'Нед'];
-const WEEKDAYS_FULL = [
-  'Понеделник',
-  'Вторник',
-  'Сряда',
-  'Четвъртък',
-  'Петък',
-  'Събота',
-  'Неделя',
-];
+const WEEKDAYS_FULL = ['Понеделник', 'Вторник', 'Сряда', 'Четвъртък', 'Петък', 'Събота', 'Неделя'];
 const MONTHS = [
   'Януари',
   'Февруари',
@@ -137,7 +126,7 @@ const MONTHS = [
 ];
 
 const START_HOUR = 8;
-const END_HOUR = 22; 
+const END_HOUR = 22;
 const SLOT_MINUTES = 30;
 
 function buildSlots() {
@@ -267,6 +256,37 @@ const SlotRow = React.memo(
     const timeKey = `${dayISO}_${time}`;
     const inputId = slotInputId(dayISO, time);
 
+    // FIX V10: Keep a local draft so typing never "disappears" on iOS.
+    const [draft, setDraft] = useState<string>(value || '');
+    const focusedRef = useRef(false);
+    const draftRef = useRef(draft);
+    const valueRef = useRef(value || '');
+
+    useEffect(() => {
+      draftRef.current = draft;
+    }, [draft]);
+
+    useEffect(() => {
+      valueRef.current = value || '';
+      // Only sync incoming store value when NOT actively editing.
+      if (!focusedRef.current) setDraft(value || '');
+    }, [value]);
+
+    const flushIfChanged = useCallback(() => {
+      if (!canWrite) return;
+      const orig = (valueRef.current || '').trim();
+      const now = (draftRef.current || '').trim();
+      if (orig === now) return;
+      onSave(dayISO, time, draftRef.current || '');
+    }, [canWrite, dayISO, time, onSave]);
+
+    // Save on unmount (covers iOS swipe/day-change where blur may not fire reliably)
+    useEffect(() => {
+      return () => {
+        if (focusedRef.current) flushIfChanged();
+      };
+    }, [flushIfChanged]);
+
     return (
       <div
         className={`relative rounded-2xl bg-neutral-900/80 border px-3 py-1 flex items-center gap-3 overflow-hidden transition ${
@@ -284,9 +304,12 @@ const SlotRow = React.memo(
         <div className="flex-1 min-w-0 flex items-center gap-2">
           <input
             id={inputId}
-            key={timeKey + value}
-            defaultValue={value}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            data-dayiso={dayISO}
+            data-time={time}
             onFocus={(e) => {
+              focusedRef.current = true;
               e.currentTarget.dataset.orig = e.currentTarget.value;
               onStartEditing();
               onRevealFocus(dayISO, time, e.currentTarget);
@@ -294,13 +317,12 @@ const SlotRow = React.memo(
             onKeyDown={(e) => {
               if (e.key === 'Enter') {
                 const el = e.target as HTMLInputElement;
-                const v = el.value;
-                el.dataset.orig = v;
-                if (canWrite) onSave(dayISO, time, v);
+                if (canWrite) onSave(dayISO, time, el.value);
                 el.blur();
               }
             }}
             onBlur={(e) => {
+              focusedRef.current = false;
               const el = e.currentTarget;
               const orig = (el.dataset.orig ?? '').trim();
               const now = (el.value ?? '').trim();
@@ -360,10 +382,11 @@ const SlotRow = React.memo(
 // FIX V7: Added translateZ(0) to fix iOS "cut off" bug (on outer)
 // FIX V8: Removed 'touch-action: pan-y' to restore Swipe
 // FIX V9: Added translateZ(0) to INNER div + minHeight to force paint
-const DayColumn = React.memo(({ 
-    date, 
-    isCurrent, 
-    dayData, 
+const DayColumn = React.memo(
+  ({
+    date,
+    isCurrent,
+    dayData,
     keyboardInset,
     remoteReady,
     savedPulse,
@@ -375,100 +398,100 @@ const DayColumn = React.memo(({
     saveName,
     armRemove,
     confirmRemove,
-    revealFocus
-}: any) => {
+    revealFocus,
+  }: any) => {
     const iso = toISODate(date);
     const dayContentRef = useRef<HTMLDivElement>(null);
-    
+
     // Auto-scroll to top only when this column becomes current
     useLayoutEffect(() => {
-        if (isCurrent && dayContentRef.current) {
-             dayContentRef.current.scrollTop = 0;
-        }
+      if (isCurrent && dayContentRef.current) {
+        dayContentRef.current.scrollTop = 0;
+      }
     }, [isCurrent]);
 
     // 35px padding + keyboard inset
     const bottomPad = 35 + keyboardInset;
 
     return (
+      <div
+        id={isCurrent ? 'bushi-day-content' : undefined}
+        ref={dayContentRef}
+        className="w-full h-full flex-shrink-0 snap-center overflow-y-auto"
+        style={{
+          WebkitOverflowScrolling: IS_IOS ? 'auto' : 'touch',
+          touchAction: IS_IOS ? ('pan-y' as any) : undefined,
+          overscrollBehaviorY: 'contain' as any,
+          overflowAnchor: 'none' as any,
+          paddingBottom: `${bottomPad}px`,
+          // iOS Safari can "stop painting" long overflow lists when the scroll container
+          // (or its ancestors) are promoted to their own compositing layer.
+          // Use containment/isolation instead of transform on the scroll container.
+          contain: IS_IOS ? undefined : ('layout paint' as any),
+          isolation: IS_IOS ? undefined : ('isolate' as any),
+        }}
+      >
         <div
-            id={isCurrent ? 'bushi-day-content' : undefined}
-            ref={dayContentRef}
-            className="w-full h-full flex-shrink-0 snap-center overflow-y-auto"
-            style={{
-                WebkitOverflowScrolling: IS_IOS ? 'auto' : 'touch',
-                touchAction: IS_IOS ? ('pan-y' as any) : undefined,
-                overscrollBehaviorY: 'contain' as any,
-                overflowAnchor: 'none' as any,
-                paddingBottom: `${bottomPad}px`,
-                // iOS Safari can "stop painting" long overflow lists when the scroll container
-                // (or its ancestors) are promoted to their own compositing layer.
-                // Use containment/isolation instead of transform on the scroll container.
-                contain: IS_IOS ? undefined : ('layout paint' as any),
-                isolation: IS_IOS ? undefined : ('isolate' as any),
-            }}
+          className="w-full relative"
+          data-bushi-paint
+          style={{
+            // Promote a NON-scroll wrapper instead (more stable on iOS than promoting the scroll container)
+            WebkitTransform: 'translate3d(0,0,0)',
+            transform: 'translate3d(0,0,0)',
+            willChange: 'transform',
+          }}
         >
-            <div 
-                className="w-full relative" data-bushi-paint
-                style={{ 
-                    // Promote a NON-scroll wrapper instead (more stable on iOS than promoting the scroll container)
-                    WebkitTransform: 'translate3d(0,0,0)',
-                    transform: 'translate3d(0,0,0)',
-                    willChange: 'transform',
-                }}
-            >
-                <div
-                    className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 px-0.5"
-                    style={{ gridAutoRows: 'min-content' }}
-                >
-                    {DAY_SLOTS.map((time) => {
-                        const value = dayData?.[time] || '';
-                        const isSaved = isCurrent && !!(savedPulse && savedPulse.day === iso && savedPulse.time === time);
-                        const timeKey = `${iso}_${time}`;
-                        const isArmed = armedRemove === timeKey;
-                        const isHighlighted = !!highlight && highlight.day === iso && highlight.time === time;
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 px-0.5" style={{ gridAutoRows: 'min-content' }}>
+            {DAY_SLOTS.map((time) => {
+              const value = dayData?.[time] || '';
+              const isSaved = isCurrent && !!(savedPulse && savedPulse.day === iso && savedPulse.time === time);
+              const timeKey = `${iso}_${time}`;
+              const isArmed = armedRemove === timeKey;
+              const isHighlighted = !!highlight && highlight.day === iso && highlight.time === time;
 
-                        return (
-                            <SlotRow
-                                key={timeKey}
-                                dayISO={iso}
-                                time={time}
-                                value={value}
-                                isSaved={isSaved}
-                                isArmed={isArmed}
-                                isHighlighted={isHighlighted}
-                                canWrite={remoteReady}
-                                onStartEditing={startEditing}
-                                onStopEditing={stopEditing}
-                                onSave={saveName}
-                                onArm={armRemove}
-                                onConfirmRemove={confirmRemove}
-                                onRevealFocus={revealFocus}
-                            />
-                        );
-                    })}
-                </div>
+              return (
+                <SlotRow
+                  key={timeKey}
+                  dayISO={iso}
+                  time={time}
+                  value={value}
+                  isSaved={isSaved}
+                  isArmed={isArmed}
+                  isHighlighted={isHighlighted}
+                  canWrite={remoteReady}
+                  onStartEditing={startEditing}
+                  onStopEditing={stopEditing}
+                  onSave={saveName}
+                  onArm={armRemove}
+                  onConfirmRemove={confirmRemove}
+                  onRevealFocus={revealFocus}
+                />
+              );
+            })}
+          </div>
 
-                {!remoteReady && (
-                    <div className="mt-3 text-xs text-neutral-500 text-center" style={{ fontFamily: BRAND.fontBody }}>
-                        Зареждане от сървъра…
-                    </div>
-                )}
+          {!remoteReady && (
+            <div className="mt-3 text-xs text-neutral-500 text-center" style={{ fontFamily: BRAND.fontBody }}>
+              Зареждане от сървъра…
             </div>
+          )}
         </div>
+      </div>
     );
-}, (prev, next) => {
+  },
+  (prev, next) => {
     return (
-        prev.iso === next.iso &&
-        prev.isCurrent === next.isCurrent &&
-        prev.keyboardInset === next.keyboardInset &&
-        prev.remoteReady === next.remoteReady &&
-        prev.dayData === next.dayData && 
-        prev.savedPulse === next.savedPulse &&
-        prev.armedRemove === next.armedRemove &&
-        prev.highlight === next.highlight
+      prev.iso === next.iso &&
+      prev.isCurrent === next.isCurrent &&
+      prev.keyboardInset === next.keyboardInset &&
+      prev.remoteReady === next.remoteReady &&
+      prev.dayData === next.dayData &&
+      prev.savedPulse === next.savedPulse &&
+      prev.armedRemove === next.armedRemove &&
+      prev.highlight === next.highlight
     );
-});
+  }
+);
 
 // =============================================================================
 // Main Calendar Component
@@ -607,9 +630,13 @@ function BarberCalendarCore() {
 
   const revealFocus = useCallback((day: string, time: string, inputEl: HTMLInputElement) => {
     window.setTimeout(() => {
-      try { inputEl.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch {}
+      try {
+        inputEl.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      } catch {}
       window.setTimeout(() => {
-        try { inputEl.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch {}
+        try {
+          inputEl.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        } catch {}
       }, 140);
     }, 60);
   }, []);
@@ -675,7 +702,7 @@ function BarberCalendarCore() {
         armedTimeoutRef.current = null;
       }, 3500);
     },
-    [clearArmedTimeout],
+    [clearArmedTimeout]
   );
 
   const [savedPulse, setSavedPulse] = useState<{ day: string; time: string; ts: number } | null>(null);
@@ -714,12 +741,6 @@ function BarberCalendarCore() {
     setDayTrackStyleIOS({ transform: `translate3d(${-w}px,0,0)`, transition: 'none' });
   }, [measureIOSDayWidth]);
 
-
-  // iOS Safari compositor workaround: long nested overflow lists can "stop painting"
-  // when momentum scrolling + scroll-snap are involved. Disabling momentum scrolling
-  // for the slot list (and the day swipe strip) on iOS is the most reliable fix.
-
-
   // Force iOS to repaint the current day list (visual-only blank/half-render bug)
   const forcePaintKick = useCallback(() => {
     if (!IS_IOS) return;
@@ -741,16 +762,133 @@ function BarberCalendarCore() {
     });
   }, []);
 
-// ===========================================================================
+  // SAVE / DELETE
+  const saveName = useCallback(
+    (day: string, time: string, nameRaw: string) => {
+      if (!remoteReady) return;
+      const name = nameRaw.trim();
+      clearArmedTimeout();
+
+      setStore((prev) => {
+        const next: Store = { ...prev };
+        if (!next[day]) next[day] = {};
+
+        if (name === '') {
+          if (next[day]) delete next[day][time];
+          if (next[day] && Object.keys(next[day]).length === 0) delete next[day];
+        } else {
+          next[day][time] = name;
+        }
+
+        saveBackup(next);
+        return next;
+      });
+
+      if (name === '') patchClearSlot(day, time);
+      else patchSetSlot(day, time, name);
+
+      setSavedPulse({ day, time, ts: Date.now() });
+      setTimeout(() => {
+        setSavedPulse((p) => (p && p.day === day && p.time === time ? null : p));
+      }, 900);
+
+      setArmedRemove(null);
+    },
+    [clearArmedTimeout, remoteReady]
+  );
+
+  const confirmRemove = useCallback(
+    (day: string, time: string) => {
+      if (!remoteReady) return;
+      clearArmedTimeout();
+
+      setStore((prev) => {
+        const next: Store = { ...prev };
+        if (next[day]) {
+          delete next[day][time];
+          if (Object.keys(next[day]).length === 0) delete next[day];
+        }
+        saveBackup(next);
+        return next;
+      });
+
+      patchClearSlot(day, time);
+      setArmedRemove(null);
+    },
+    [clearArmedTimeout, remoteReady]
+  );
+
+  // FIX V10: Flush the currently focused slot input (covers iOS tap-outside / swipe-day cases)
+  const flushActiveSlotDraft = useCallback(() => {
+    if (!remoteReady) return;
+    if (typeof document === 'undefined') return;
+    const el = document.activeElement as HTMLInputElement | null;
+    if (!el) return;
+    const id = (el as any).id as string | undefined;
+    if (typeof id !== 'string' || !id.startsWith('slot_')) return;
+
+    const day = (el.dataset?.dayiso || '').trim();
+    const time = (el.dataset?.time || '').trim();
+    if (!day || !time) return;
+
+    const orig = ((el.dataset?.orig ?? '') as string).trim();
+    const now = (el.value ?? '').trim();
+    if (orig === now) return;
+
+    // Keep dataset in sync to avoid double-saves
+    el.dataset.orig = el.value;
+    saveName(day, time, el.value);
+  }, [remoteReady, saveName]);
+
+  // ===========================================================================
   // iOS NUCLEAR FIX: translateX swipe track (avoids WebKit partial-paint bug)
   // ===========================================================================
   const IOS_SWIPE_THRESHOLD = 70;
   const IOS_SWIPE_CLAMP = 260;
 
+  // NATIVE SCROLL SNAP LOGIC (Day Swipe)
+  const dayScrollerRef = useRef<HTMLDivElement>(null);
+
+  // lock + debounce timers
+  const isShiftingRef = useRef(false);
+  const scrollEndTimerRef = useRef<number | null>(null);
+  const lastShiftAtRef = useRef<number>(0);
+
+  const clearScrollEndTimer = useCallback(() => {
+    if (scrollEndTimerRef.current != null) {
+      window.clearTimeout(scrollEndTimerRef.current);
+      scrollEndTimerRef.current = null;
+    }
+  }, []);
+
+  const centerDayScroller = useCallback((behavior: 'auto' | 'smooth' = 'auto') => {
+    const el = dayScrollerRef.current;
+    if (!el) return;
+    const w = el.offsetWidth;
+    if (!w) return;
+    if (behavior === 'smooth') el.scrollTo({ left: w, behavior: 'smooth' });
+    else el.scrollLeft = w;
+  }, []);
+
+  const shiftSelectedDay = (delta: number) => {
+    setSelectedDate((prev) => {
+      if (!prev) return prev;
+      const next = addDays(prev, delta);
+      if (next.getFullYear() !== viewYear || next.getMonth() !== viewMonth) {
+        setViewYear(next.getFullYear());
+        setViewMonth(next.getMonth());
+      }
+      return next;
+    });
+  };
+
   const commitIOSSwipe = useCallback(
     (delta: number) => {
       const w = dayWRefIOS.current || measureIOSDayWidth();
       if (!w) return;
+
+      // FIX V10: save active draft before changing day
+      flushActiveSlotDraft();
 
       // Animate to prev (0) or next (-2w). We are centered at -w.
       const targetX = delta > 0 ? -2 * w : 0;
@@ -767,7 +905,7 @@ function BarberCalendarCore() {
         });
       }, 170);
     },
-    [measureIOSDayWidth, viewMonth, viewYear],
+    [measureIOSDayWidth, viewMonth, viewYear, flushActiveSlotDraft]
   );
 
   const onIOSPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -846,44 +984,6 @@ function BarberCalendarCore() {
     }
   };
 
-// ===========================================================================
-  // NATIVE SCROLL SNAP LOGIC (Day Swipe)
-  // ===========================================================================
-  const dayScrollerRef = useRef<HTMLDivElement>(null);
-
-  // lock + debounce timers
-  const isShiftingRef = useRef(false);
-  const scrollEndTimerRef = useRef<number | null>(null);
-  const lastShiftAtRef = useRef<number>(0);
-
-  const clearScrollEndTimer = useCallback(() => {
-    if (scrollEndTimerRef.current != null) {
-      window.clearTimeout(scrollEndTimerRef.current);
-      scrollEndTimerRef.current = null;
-    }
-  }, []);
-
-  const centerDayScroller = useCallback((behavior: 'auto' | 'smooth' = 'auto') => {
-    const el = dayScrollerRef.current;
-    if (!el) return;
-    const w = el.offsetWidth;
-    if (!w) return;
-    if (behavior === 'smooth') el.scrollTo({ left: w, behavior: 'smooth' });
-    else el.scrollLeft = w;
-  }, []);
-
-  const shiftSelectedDay = (delta: number) => {
-    setSelectedDate((prev) => {
-      if (!prev) return prev;
-      const next = addDays(prev, delta);
-      if (next.getFullYear() !== viewYear || next.getMonth() !== viewMonth) {
-        setViewYear(next.getFullYear());
-        setViewMonth(next.getMonth());
-      }
-      return next;
-    });
-  };
-
   const commitShiftDay = useCallback(
     (delta: number) => {
       const el = dayScrollerRef.current;
@@ -898,13 +998,16 @@ function BarberCalendarCore() {
         return;
       }
 
+      // FIX V10: save active draft before changing day
+      flushActiveSlotDraft();
+
       lastShiftAtRef.current = now;
       isShiftingRef.current = true;
 
       (el.style as any).scrollSnapType = 'none';
       el.scrollLeft = w;
       // eslint-disable-next-line @typescript-eslint/no-unused-expressions
-      (el as any).offsetHeight; 
+      (el as any).offsetHeight;
 
       requestAnimationFrame(() => {
         const cur = dayScrollerRef.current;
@@ -924,12 +1027,9 @@ function BarberCalendarCore() {
         (cur as any).offsetHeight;
         const currentCol = document.getElementById('bushi-day-content') as HTMLDivElement | null;
         if (currentCol) {
-          // Re-assert scrollTop (even if already 0) to trigger paint
-          // Hard paint kick: tiny scrollTop jiggle forces iOS to redraw rows
           const prevTop = currentCol.scrollTop;
           currentCol.scrollTop = prevTop + 1;
           currentCol.scrollTop = prevTop;
-          // Force layout
           currentCol.getBoundingClientRect();
           forcePaintKick();
           // eslint-disable-next-line @typescript-eslint/no-unused-expressions
@@ -941,7 +1041,7 @@ function BarberCalendarCore() {
         isShiftingRef.current = false;
       }, 520);
     },
-    [centerDayScroller, viewMonth, viewYear],
+    [centerDayScroller, viewMonth, viewYear, flushActiveSlotDraft, forcePaintKick]
   );
 
   const handleDayScrollEnd = useCallback(() => {
@@ -983,16 +1083,15 @@ function BarberCalendarCore() {
     if (!selectedDate) return;
     if (IS_IOS) requestAnimationFrame(() => resetIOSTrack());
     clearScrollEndTimer();
-    
+
     requestAnimationFrame(() => {
       centerDayScroller('auto');
       requestAnimationFrame(() => {
-        // Extra kick right after centering (helps the *first* swipe paint on iOS)
         forcePaintKick();
         isShiftingRef.current = false;
       });
     });
-  }, [selectedDayISO, selectedDate, centerDayScroller, clearScrollEndTimer]);
+  }, [selectedDayISO, selectedDate, centerDayScroller, clearScrollEndTimer, resetIOSTrack, forcePaintKick]);
 
   useEffect(() => {
     setPanelStyle({});
@@ -1003,6 +1102,9 @@ function BarberCalendarCore() {
   useEffect(() => () => clearArmedTimeout(), [clearArmedTimeout]);
 
   const animateCloseDown = () => {
+    // FIX V10: save active draft before closing the modal
+    flushActiveSlotDraft();
+
     setPanelStyle({
       transform: 'translateY(160px)',
       opacity: 0,
@@ -1014,62 +1116,6 @@ function BarberCalendarCore() {
       setPendingFocus(null);
     }, 170);
   };
-
-  // SAVE / DELETE
-  const saveName = useCallback(
-    (day: string, time: string, nameRaw: string) => {
-      if (!remoteReady) return;
-      const name = nameRaw.trim();
-      clearArmedTimeout();
-
-      setStore((prev) => {
-        const next: Store = { ...prev };
-        if (!next[day]) next[day] = {};
-
-        if (name === '') {
-          if (next[day]) delete next[day][time];
-          if (next[day] && Object.keys(next[day]).length === 0) delete next[day];
-        } else {
-          next[day][time] = name;
-        }
-
-        saveBackup(next);
-        return next;
-      });
-
-      if (name === '') patchClearSlot(day, time);
-      else patchSetSlot(day, time, name);
-
-      setSavedPulse({ day, time, ts: Date.now() });
-      setTimeout(() => {
-        setSavedPulse((p) => (p && p.day === day && p.time === time ? null : p));
-      }, 900);
-
-      setArmedRemove(null);
-    },
-    [clearArmedTimeout, remoteReady],
-  );
-
-  const confirmRemove = useCallback(
-    (day: string, time: string) => {
-      if (!remoteReady) return;
-      clearArmedTimeout();
-
-      setStore((prev) => {
-        const next: Store = { ...prev };
-        if (next[day]) {
-          delete next[day][time];
-          if (Object.keys(next[day]).length === 0) delete next[day];
-        }
-        saveBackup(next);
-        return next;
-      });
-
-      patchClearSlot(day, time);
-      setArmedRemove(null);
-    },
-    [clearArmedTimeout, remoteReady],
-  );
 
   useEffect(() => {
     if (!selectedDate) return;
@@ -1092,7 +1138,9 @@ function BarberCalendarCore() {
     const t = window.setTimeout(() => {
       const el = document.getElementById(id) as HTMLInputElement | null;
       if (el) {
-        try { el.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch {}
+        try {
+          el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        } catch {}
         el.focus();
         el.select();
       }
@@ -1105,6 +1153,9 @@ function BarberCalendarCore() {
   const matrix = useMemo(() => monthMatrix(viewYear, viewMonth), [viewYear, viewMonth]);
 
   const openDay = (d: Date) => {
+    // FIX V10: save active draft before switching to another day
+    flushActiveSlotDraft();
+
     if (d.getFullYear() !== viewYear || d.getMonth() !== viewMonth) {
       setViewYear(d.getFullYear());
       setViewMonth(d.getMonth());
@@ -1312,6 +1363,7 @@ function BarberCalendarCore() {
     monthModeRef.current = 'none';
     monthBlockClickRef.current = false;
   };
+
   // Year modal swipe gestures (left/right to change year)
   const yearStartX = useRef<number | null>(null);
   const yearStartY = useRef<number | null>(null);
@@ -1335,7 +1387,6 @@ function BarberCalendarCore() {
   };
 
   const animateYearShift = (delta: number) => {
-    // small slide + fade animation
     setYearStyle({
       transform: `translateX(${delta > 0 ? -22 : 22}px)`,
       opacity: 0.55,
@@ -1386,7 +1437,6 @@ function BarberCalendarCore() {
     }
 
     if (yearModeRef.current === 'horizontal') {
-      // keep the modal stable while swiping
       e.preventDefault();
       const dx = clamp(dxRaw, -YEAR_H_CLAMP, YEAR_H_CLAMP);
       setYearStyle({ transform: `translateX(${dx}px)`, opacity: 0.85, transition: 'none' });
@@ -1406,7 +1456,11 @@ function BarberCalendarCore() {
       if (Math.abs(dx) >= YEAR_SWIPE_THRESHOLD) {
         animateYearShift(dx < 0 ? +1 : -1);
       } else {
-        setYearStyle({ transform: 'translateX(0)', opacity: 1, transition: `transform 140ms ${SNAP_EASE}, opacity 140ms ${SNAP_EASE}` });
+        setYearStyle({
+          transform: 'translateX(0)',
+          opacity: 1,
+          transition: `transform 140ms ${SNAP_EASE}, opacity 140ms ${SNAP_EASE}`,
+        });
       }
 
       setTimeout(() => {
@@ -1421,13 +1475,13 @@ function BarberCalendarCore() {
     yearBlockClickRef.current = false;
   };
 
-
   const [yearStyle, setYearStyle] = useState<React.CSSProperties>({});
 
   // Helper to get props for DayColumn
-  const getDayProps = useCallback((date: Date, isCurrent: boolean) => {
-    const iso = toISODate(date);
-    return {
+  const getDayProps = useCallback(
+    (date: Date, isCurrent: boolean) => {
+      const iso = toISODate(date);
+      return {
         key: iso, // STABLE KEY is crucial
         date,
         isCurrent,
@@ -1442,9 +1496,24 @@ function BarberCalendarCore() {
         saveName,
         armRemove,
         confirmRemove,
-        revealFocus
-    };
-  }, [store, keyboardInset, remoteReady, savedPulse, armedRemove, highlight, startEditing, stopEditing, saveName, armRemove, confirmRemove, revealFocus]);
+        revealFocus,
+      };
+    },
+    [
+      store,
+      keyboardInset,
+      remoteReady,
+      savedPulse,
+      armedRemove,
+      highlight,
+      startEditing,
+      stopEditing,
+      saveName,
+      armRemove,
+      confirmRemove,
+      revealFocus,
+    ]
+  );
 
   return (
     <div
@@ -1456,7 +1525,6 @@ function BarberCalendarCore() {
       }}
     >
       <div className="max-w-screen-2xl mx-auto px-[clamp(12px,2.5vw,40px)] pt-[clamp(12px,2.5vw,40px)] pb-[clamp(8px,2vw,24px)] h-full flex flex-col select-none">
-        
         <div className="flex flex-col md:flex-row items-center justify-center md:justify-between gap-1 md:gap-6">
           <img
             src={BRAND.logoLight}
@@ -1479,7 +1547,10 @@ function BarberCalendarCore() {
         </div>
 
         {/* Weekdays */}
-        <div className="mt-[clamp(12px,2.8vw,28px)] grid grid-cols-7 gap-[clamp(6px,1.2vw,16px)] text-center" style={{ fontFamily: BRAND.fontTitle }}>
+        <div
+          className="mt-[clamp(12px,2.8vw,28px)] grid grid-cols-7 gap-[clamp(6px,1.2vw,16px)] text-center"
+          style={{ fontFamily: BRAND.fontTitle }}
+        >
           {WEEKDAYS_SHORT.map((d, idx) => {
             const isSat = idx === 5;
             const isSun = idx === 6;
@@ -1523,13 +1594,27 @@ function BarberCalendarCore() {
             const cls = [
               'rounded-2xl flex items-center justify-center bg-neutral-900 text-white border transition cursor-pointer',
               'h-full w-full aspect-square md:aspect-auto p-[clamp(6px,1vw,20px)] focus:outline-none',
-              !inMonth ? 'border-neutral-800 opacity-40 hover:opacity-70' : isToday ? 'border-white/70 ring-2 ring-white/20' : 'border-neutral-700 hover:border-white/60',
+              !inMonth
+                ? 'border-neutral-800 opacity-40 hover:opacity-70'
+                : isToday
+                  ? 'border-white/70 ring-2 ring-white/20'
+                  : 'border-neutral-700 hover:border-white/60',
             ].join(' ');
 
             return (
-              <button key={key} onClick={() => { if (monthBlockClickRef.current) return; openDay(d); }} className={cls}>
+              <button
+                key={key}
+                onClick={() => {
+                  if (monthBlockClickRef.current) return;
+                  openDay(d);
+                }}
+                className={cls}
+              >
                 <div className="flex flex-col items-center justify-center gap-2 w-full">
-                  <span className={`select-none text-[clamp(17px,3.5vw,32px)] ${isToday ? 'font-extrabold' : ''}`} style={{ fontFamily: BRAND.fontNumbers }}>
+                  <span
+                    className={`select-none text-[clamp(17px,3.5vw,32px)] ${isToday ? 'font-extrabold' : ''}`}
+                    style={{ fontFamily: BRAND.fontNumbers }}
+                  >
                     {inMonth && full ? 'X' : num}
                   </span>
                   {showBar && (
@@ -1572,8 +1657,8 @@ function BarberCalendarCore() {
           }}
         >
           <div className="w-[min(100%-28px,860px)] max-w-2xl rounded-3xl border border-neutral-800 bg-neutral-950/95 shadow-2xl px-5 py-5 sm:px-7 sm:py-7">
-             <div className="flex items-center justify-between gap-3">
-               <div className="text-[clamp(22px,4.2vw,32px)] leading-none select-none" style={{ fontFamily: BRAND.fontTitle }}>
+            <div className="flex items-center justify-between gap-3">
+              <div className="text-[clamp(22px,4.2vw,32px)] leading-none select-none" style={{ fontFamily: BRAND.fontTitle }}>
                 Най-близки свободни часове
               </div>
               <button
@@ -1585,8 +1670,10 @@ function BarberCalendarCore() {
               </button>
             </div>
             <div className="mt-4 max-h-[62vh] overflow-y-auto pr-1">
-               {closestAvail.length === 0 ? (
-                <div className="text-neutral-400 text-sm" style={{ fontFamily: BRAND.fontBody }}>Няма свободни часове напред.</div>
+              {closestAvail.length === 0 ? (
+                <div className="text-neutral-400 text-sm" style={{ fontFamily: BRAND.fontBody }}>
+                  Няма свободни часове напред.
+                </div>
               ) : (
                 <div className="space-y-3">
                   {closestGrouped.map(({ dayISO, list }) => (
@@ -1601,7 +1688,9 @@ function BarberCalendarCore() {
                             onClick={() => openFromAvailability(h.dayISO, h.time)}
                             className="rounded-xl border border-neutral-800 bg-neutral-950/60 hover:bg-neutral-900/70 px-3 py-2 text-center"
                           >
-                             <div className="text-sm font-semibold tabular-nums" style={{ fontFamily: BRAND.fontBody }}>{h.time}</div>
+                            <div className="text-sm font-semibold tabular-nums" style={{ fontFamily: BRAND.fontBody }}>
+                              {h.time}
+                            </div>
                           </button>
                         ))}
                       </div>
@@ -1627,30 +1716,42 @@ function BarberCalendarCore() {
           }}
         >
           <div className="w-[min(100%-28px,860px)] max-w-2xl rounded-3xl border border-neutral-800 bg-neutral-950/95 shadow-2xl px-5 py-5 sm:px-7 sm:py-7">
-             <div className="text-[clamp(22px,4.2vw,32px)] leading-none select-none" style={{ fontFamily: BRAND.fontTitle }}>Търсене на клиент</div>
-             <div className="mt-4">
-               <input
+            <div className="text-[clamp(22px,4.2vw,32px)] leading-none select-none" style={{ fontFamily: BRAND.fontTitle }}>
+              Търсене на клиент
+            </div>
+            <div className="mt-4">
+              <input
                 ref={searchInputRef}
                 value={searchQ}
                 onChange={(e) => setSearchQ(e.target.value)}
                 placeholder="Въведи име…"
                 className="w-full rounded-2xl bg-neutral-900/70 border border-neutral-700/70 px-4 py-3 text-base"
                 style={{ fontFamily: BRAND.fontBody }}
-               />
-             </div>
-             <div className="mt-4 max-h-[58vh] overflow-y-auto pr-1">
-               {hits.length === 0 ? (
-                 <div className="text-neutral-400 text-sm" style={{ fontFamily: BRAND.fontBody }}>Няма резултати.</div>
-               ) : (
-                 <div className="space-y-3">
+              />
+            </div>
+            <div className="mt-4 max-h-[58vh] overflow-y-auto pr-1">
+              {hits.length === 0 ? (
+                <div className="text-neutral-400 text-sm" style={{ fontFamily: BRAND.fontBody }}>
+                  Няма резултати.
+                </div>
+              ) : (
+                <div className="space-y-3">
                   {groupedHits.map(({ dayISO, list }) => (
                     <div key={dayISO} className="rounded-2xl border border-neutral-800 bg-neutral-900/40 p-3">
-                      <div className="text-sm text-neutral-200 mb-2" style={{ fontFamily: BRAND.fontBody }}>{formatDayLabel(dayISO)}</div>
+                      <div className="text-sm text-neutral-200 mb-2" style={{ fontFamily: BRAND.fontBody }}>
+                        {formatDayLabel(dayISO)}
+                      </div>
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                         {list.map((h) => (
-                           <button key={`${h.dayISO}_${h.time}_${h.name}`} onClick={() => openFromSearch(h.dayISO, h.time)} className="rounded-xl border border-neutral-800 bg-neutral-950/60 hover:bg-neutral-900/70 px-3 py-2 text-left">
+                          <button
+                            key={`${h.dayISO}_${h.time}_${h.name}`}
+                            onClick={() => openFromSearch(h.dayISO, h.time)}
+                            className="rounded-xl border border-neutral-800 bg-neutral-950/60 hover:bg-neutral-900/70 px-3 py-2 text-left"
+                          >
                             <div className="flex items-center justify-between gap-3">
-                              <div className="text-sm font-semibold tabular-nums" style={{ fontFamily: BRAND.fontBody }}>{h.time}</div>
+                              <div className="text-sm font-semibold tabular-nums" style={{ fontFamily: BRAND.fontBody }}>
+                                {h.time}
+                              </div>
                               <div className="text-sm text-neutral-200 truncate">{h.name}</div>
                             </div>
                           </button>
@@ -1658,31 +1759,39 @@ function BarberCalendarCore() {
                       </div>
                     </div>
                   ))}
-                 </div>
-               )}
-             </div>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}
 
       {/* Year Modal */}
       {showYear && (
-        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/70" onClick={(e) => {
-          if (yearBlockClickRef.current) {
-            e.preventDefault();
-            yearBlockClickRef.current = false;
-            return;
-          }
-          setShowYear(false);
-        }}>
-          <div className="w-[min(100%-32px,820px)] max-w-xl rounded-3xl border border-neutral-800 bg-neutral-950/95 shadow-2xl px-6 py-6 sm:px-8 sm:py-8" style={{ ...yearStyle, touchAction: 'pan-y' as any }}
+        <div
+          className="fixed inset-0 z-40 flex items-center justify-center bg-black/70"
+          onClick={(e) => {
+            if (yearBlockClickRef.current) {
+              e.preventDefault();
+              yearBlockClickRef.current = false;
+              return;
+            }
+            setShowYear(false);
+          }}
+        >
+          <div
+            className="w-[min(100%-32px,820px)] max-w-xl rounded-3xl border border-neutral-800 bg-neutral-950/95 shadow-2xl px-6 py-6 sm:px-8 sm:py-8"
+            style={{ ...yearStyle, touchAction: 'pan-y' as any }}
             onTouchStart={onYearTouchStart}
             onTouchMove={onYearTouchMove}
             onTouchEnd={onYearTouchEnd}
             onTouchCancel={onYearTouchEnd}
-            onClick={(e) => e.stopPropagation()}>
-             <div className="flex items-center justify-center">
-              <div className="text-[clamp(30px,6vw,44px)] leading-none select-none" style={{ fontFamily: BRAND.fontTitle }}>{viewYear}</div>
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-center">
+              <div className="text-[clamp(30px,6vw,44px)] leading-none select-none" style={{ fontFamily: BRAND.fontTitle }}>
+                {viewYear}
+              </div>
             </div>
             <div className="mt-6 grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-4">
               {MONTHS.map((label, idx) => (
@@ -1699,7 +1808,9 @@ function BarberCalendarCore() {
                     setShowYear(false);
                   }}
                   className={`h-11 sm:h-12 rounded-2xl border text-[13px] sm:text-[14px] uppercase tracking-[0.12em] transition ${
-                    idx === viewMonth ? 'border-white text-white bg-neutral-900' : 'border-neutral-700/70 text-neutral-200 bg-neutral-900/50 hover:bg-neutral-800'
+                    idx === viewMonth
+                      ? 'border-white text-white bg-neutral-900'
+                      : 'border-neutral-700/70 text-neutral-200 bg-neutral-900/50 hover:bg-neutral-800'
                   }`}
                   style={{ fontFamily: BRAND.fontTitle }}
                 >
@@ -1721,13 +1832,10 @@ function BarberCalendarCore() {
             onTouchStart={(e) => e.stopPropagation()}
           >
             {/* Header */}
-            <div
-              className="flex-shrink-0 flex items-center justify-between cursor-pointer mb-4"
-              onClick={animateCloseDown}
-              title="Tap to close"
-            >
+            <div className="flex-shrink-0 flex items-center justify-between cursor-pointer mb-4" onClick={animateCloseDown} title="Tap to close">
               <h3 className="text-2xl md:text-3xl font-bold" style={{ fontFamily: BRAND.fontTitle }}>
-                {WEEKDAYS_FULL[(selectedDate.getDay() + 6) % 7]} {selectedDate.getDate()} {MONTHS[selectedDate.getMonth()]} {selectedDate.getFullYear()}
+                {WEEKDAYS_FULL[(selectedDate.getDay() + 6) % 7]} {selectedDate.getDate()} {MONTHS[selectedDate.getMonth()]}{' '}
+                {selectedDate.getFullYear()}
               </h3>
               <div className="w-10 md:w-12" />
             </div>
@@ -1757,25 +1865,24 @@ function BarberCalendarCore() {
               </div>
             ) : (
               <>
-{/* Native Scroll Snap Container - FIX V6 */}
-            <div className="flex-1 w-full min-h-0">
-              <div
-                 ref={dayScrollerRef}
-                 onScroll={onDayScroll}
-                 className="w-full h-full flex overflow-x-auto snap-x snap-mandatory no-scrollbar"
-                 style={{
-                   WebkitOverflowScrolling: IS_IOS ? 'auto' : 'touch',
-                   overscrollBehaviorX: 'contain' as any,
-                   // Helps iOS Safari repaint long scrollable content after fast snap swipes
-                   WebkitTransform: 'translate3d(0,0,0)',
-                 }}
-              >
-                  {/* We use the extracted component <DayColumn /> here */}
-                  <DayColumn {...getDayProps(addDays(selectedDate, -1), false)} />
-                  <DayColumn {...getDayProps(selectedDate, true)} />
-                  <DayColumn {...getDayProps(addDays(selectedDate, 1), false)} />
-               </div>
-            </div>
+                {/* Native Scroll Snap Container - FIX V6 */}
+                <div className="flex-1 w-full min-h-0">
+                  <div
+                    ref={dayScrollerRef}
+                    onScroll={onDayScroll}
+                    className="w-full h-full flex overflow-x-auto snap-x snap-mandatory no-scrollbar"
+                    style={{
+                      WebkitOverflowScrolling: IS_IOS ? 'auto' : 'touch',
+                      overscrollBehaviorX: 'contain' as any,
+                      // Helps iOS Safari repaint long scrollable content after fast snap swipes
+                      WebkitTransform: 'translate3d(0,0,0)',
+                    }}
+                  >
+                    <DayColumn {...getDayProps(addDays(selectedDate, -1), false)} />
+                    <DayColumn {...getDayProps(selectedDate, true)} />
+                    <DayColumn {...getDayProps(addDays(selectedDate, 1), false)} />
+                  </div>
+                </div>
               </>
             )}
           </div>
@@ -1817,15 +1924,36 @@ export default function BarbershopAdminPanel() {
         <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(255,255,255,0.16)_0,_transparent_55%),radial-gradient(circle_at_bottom,_rgba(255,255,255,0.12)_0,_transparent_55%)]" />
         <div className="relative w-[min(100%-40px,420px)] rounded-[32px] border border-white/10 bg-[rgba(8,8,8,0.9)] backdrop-blur-xl px-7 py-8 shadow-[0_24px_80px_rgba(0,0,0,0.9)]">
           <div className="mb-4 flex justify-center">
-             <img src="/bush.png" alt="Bushi logo" className="max-h-16 w-auto object-contain" />
+            <img src="/bush.png" alt="Bushi logo" className="max-h-16 w-auto object-contain" />
           </div>
-          <p className="text-xs text-neutral-400 text-center mb-6" style={{ fontFamily: BRAND.fontBody }}>Enter your PIN.</p>
+          <p className="text-xs text-neutral-400 text-center mb-6" style={{ fontFamily: BRAND.fontBody }}>
+            Enter your PIN.
+          </p>
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="rounded-2xl bg-neutral-900/80 border border-white/12 px-4 py-3 flex items-center focus-within:border-white/70 transition">
-              <input type="password" inputMode="numeric" autoComplete="off" value={pin} onChange={(e) => setPin(e.target.value)} maxLength={6} className="w-full bg-transparent border-none outline-none text-center text-lg tracking-[0.35em] placeholder:text-neutral-600" style={{ fontFamily: BRAND.fontBody }} placeholder="••••" />
+              <input
+                type="password"
+                inputMode="numeric"
+                autoComplete="off"
+                value={pin}
+                onChange={(e) => setPin(e.target.value)}
+                maxLength={6}
+                className="w-full bg-transparent border-none outline-none text-center text-lg tracking-[0.35em] placeholder:text-neutral-600"
+                style={{ fontFamily: BRAND.fontBody }}
+                placeholder="••••"
+              />
             </div>
-            {error && <div className="text-xs text-red-400 text-center" style={{ fontFamily: BRAND.fontBody }}>{error}</div>}
-            <button type="submit" className="w-full rounded-2xl bg-white text-black font-semibold py-2.5 text-sm tracking-[0.16em] uppercase hover:bg-neutral-200 transition">Unlock</button>
+            {error && (
+              <div className="text-xs text-red-400 text-center" style={{ fontFamily: BRAND.fontBody }}>
+                {error}
+              </div>
+            )}
+            <button
+              type="submit"
+              className="w-full rounded-2xl bg-white text-black font-semibold py-2.5 text-sm tracking-[0.16em] uppercase hover:bg-neutral-200 transition"
+            >
+              Unlock
+            </button>
           </form>
         </div>
       </div>
