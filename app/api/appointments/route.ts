@@ -33,40 +33,47 @@ const jsonNoStore = (data: any, status = 200) =>
 
 // -----------------------------------------------------------------------------
 // GET  /api/appointments
-// Returns full calendar as: { "2025-12-01": { "08:00": "Name", ... }, ... }
+// NOTE: Supabase select() defaults to 1000 rows. If you have >1000 appointments,
+// you MUST paginate/range, otherwise some days/times will randomly "disappear".
 // -----------------------------------------------------------------------------
+// Returns full calendar as: { "2026-03-06": { "08:00": "Name", ... }, ... }
 export async function GET() {
   try {
-    // NOTE:
-    // - We order by id so if legacy duplicates exist, the newest row wins deterministically.
-    // - We NEVER allow an empty name to overwrite a non-empty name (prevents "blank row" wiping UI).
-    const { data, error } = await supabase
-      .from("appointments")
-      .select("id,day,time,name")
-      .order("id", { ascending: true });
-
-    if (error) {
-      console.error("GET /api/appointments error:", error);
-      return jsonNoStore({}, 200);
-    }
-
     const store: Store = {};
-    (data || []).forEach((row: any) => {
-      const day = String(row.day ?? "").trim();
-      const time = String(row.time ?? "").trim();
-      const name = String(row.name ?? "");
 
-      if (!day || !time) return;
-      if (!store[day]) store[day] = {};
+    const PAGE = 1000;
+    let from = 0;
 
-      const incoming = (name || "").trim();
-      const existing = (store[day][time] || "").trim();
+    while (true) {
+      const { data, error } = await supabase
+        .from("appointments")
+        .select("day,time,name")
+        // stable ordering so paging is deterministic
+        .order("day", { ascending: true })
+        .order("time", { ascending: true })
+        .range(from, from + PAGE - 1);
 
-      // If we already have a name, don't let a blank overwrite it.
-      if (existing.length > 0 && incoming.length === 0) return;
+      if (error) {
+        console.error("GET /api/appointments error:", error);
+        return jsonNoStore({}, 200);
+      }
 
-      store[day][time] = incoming;
-    });
+      const rows = (data || []) as any[];
+      for (const row of rows) {
+        const day = (row.day ?? "") as string;
+        const time = (row.time ?? "") as string;
+        const name = (row.name ?? "") as string;
+
+        if (!day || !time) continue;
+        if (!store[day]) store[day] = {};
+        store[day][time] = name || "";
+      }
+
+      if (rows.length < PAGE) break;
+      from += PAGE;
+      // safety stop (prevents infinite loop if something weird happens)
+      if (from > 50000) break;
+    }
 
     return jsonNoStore(store, 200);
   } catch (e) {
@@ -74,6 +81,13 @@ export async function GET() {
     return jsonNoStore({}, 200);
   }
 }
+
+// -----------------------------------------------------------------------------
+// PATCH /api/appointments  (SAFE: single-slot operations, no wipe possible)
+// Body examples:
+//  { op: "set", day: "2026-03-06", time: "10:30", name: "Ivan" }
+//  { op: "clear", day: "2026-03-06", time: "10:30" }
+// -----------------------------------------------------------------------------
 export async function PATCH(req: NextRequest) {
   try {
     const body = await req.json().catch(() => null);
@@ -129,16 +143,13 @@ export async function PATCH(req: NextRequest) {
         return jsonNoStore({ ok: true }, 200);
       }
 
-      // Requires unique index on (day,time) (you already created it)
+      // Requires unique constraint/index on (day,time)
       const { error: upsertErr } = await supabase
         .from("appointments")
         .upsert([{ day, time, name }], { onConflict: "day,time" });
 
       if (upsertErr) {
-        console.warn(
-          "PATCH set upsert failed, falling back to delete+insert:",
-          upsertErr
-        );
+        console.warn("PATCH set upsert failed, falling back to delete+insert:", upsertErr);
 
         const { error: delErr } = await supabase
           .from("appointments")
@@ -148,10 +159,7 @@ export async function PATCH(req: NextRequest) {
 
         if (delErr) {
           console.error("PATCH set fallback delete error:", delErr);
-          return jsonNoStore(
-            { error: "Failed to set slot (fallback delete)" },
-            500
-          );
+          return jsonNoStore({ error: "Failed to set slot (fallback delete)" }, 500);
         }
 
         const { error: insErr } = await supabase
@@ -160,10 +168,7 @@ export async function PATCH(req: NextRequest) {
 
         if (insErr) {
           console.error("PATCH set fallback insert error:", insErr);
-          return jsonNoStore(
-            { error: "Failed to set slot (fallback insert)" },
-            500
-          );
+          return jsonNoStore({ error: "Failed to set slot (fallback insert)" }, 500);
         }
       }
 
@@ -179,7 +184,7 @@ export async function PATCH(req: NextRequest) {
 
 // -----------------------------------------------------------------------------
 // POST /api/appointments  (DANGEROUS BULK OVERWRITE)
-// NOW PROTECTED so OLD CLIENTS CAN'T WIPE THE TABLE.
+// Protected: old clients can't wipe the table.
 // Required body:
 //   { _dangerouslyOverwriteAll: true, store: { ...fullStore } }
 // -----------------------------------------------------------------------------
@@ -194,13 +199,10 @@ export async function POST(req: NextRequest) {
     const allow = (body as any)._dangerouslyOverwriteAll === true;
     const store = (body as any).store as Store | undefined;
 
-    // IMPORTANT: This blocks your OLD app versions from wiping data,
-    // because they used to POST the store directly (without this flag).
     if (!allow || !store || typeof store !== "object") {
       return jsonNoStore(
         {
-          error:
-            "Bulk overwrite is disabled. Use PATCH for single-slot updates.",
+          error: "Bulk overwrite is disabled. Use PATCH for single-slot updates.",
         },
         400
       );
@@ -221,34 +223,28 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Delete ALL rows. Use day IS NOT NULL (safer than relying on an "id" column).
-    const { error: delError } = await supabase
+    // Delete ALL rows
+    const { error: delAllErr } = await supabase
       .from("appointments")
       .delete()
       .not("day", "is", null);
 
-    if (delError) {
-      console.error("POST /api/appointments delete error:", delError);
-      return jsonNoStore(
-        { error: "Failed to clear existing appointments" },
-        500
-      );
+    if (delAllErr) {
+      console.error("POST overwrite delete-all error:", delAllErr);
+      return jsonNoStore({ error: "Failed to clear existing data" }, 500);
     }
 
     if (rows.length > 0) {
-      const { error: insError } = await supabase
-        .from("appointments")
-        .insert(rows);
-
-      if (insError) {
-        console.error("POST /api/appointments insert error:", insError);
-        return jsonNoStore({ error: "Failed to save appointments" }, 500);
+      const { error: insErr } = await supabase.from("appointments").insert(rows);
+      if (insErr) {
+        console.error("POST overwrite insert error:", insErr);
+        return jsonNoStore({ error: "Failed to insert new data" }, 500);
       }
     }
 
     return jsonNoStore({ ok: true }, 200);
   } catch (e) {
     console.error("POST /api/appointments exception:", e);
-    return jsonNoStore({ error: "Exception while saving" }, 500);
+    return jsonNoStore({ error: "Exception while overwriting" }, 500);
   }
 }
