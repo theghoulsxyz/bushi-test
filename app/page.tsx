@@ -165,7 +165,7 @@ const API_ENDPOINT = '/api/appointments';
 async function fetchRemoteStore(): Promise<Store | null> {
   if (typeof window === 'undefined') return null;
   try {
-    const res = await fetch(API_ENDPOINT, {
+    const res = await fetch(`${API_ENDPOINT}?_=${Date.now()}`, {
       method: 'GET',
       cache: 'no-store',
       headers: { 'Cache-Control': 'no-store', Pragma: 'no-cache' },
@@ -584,11 +584,6 @@ function BarberCalendarCore() {
       // Apply pending ops on top of remote so it can’t erase our local changes
       for (const [k, op] of Object.entries(pendingOpsRef.current)) {
         if (!op) continue;
-        // If we've already retried many times, stop overriding the server forever.
-        if ((op as any).tries >= 6) {
-          delete pendingOpsRef.current[k];
-          continue;
-        }
         const { day, time, value } = op;
 
         if (value == null || String(value).trim().length === 0) {
@@ -660,12 +655,7 @@ function BarberCalendarCore() {
       const op = op0 as PendingOp | undefined;
       if (!op) continue;
       if (op.nextAt > now) continue;
-      if (op.tries >= 6) {
-        // Give up: do NOT keep a permanent local override that hides server data.
-        delete pendingOpsRef.current[key];
-        persistPendingOps();
-        continue;
-      }
+      if (op.tries >= 6) continue;
 
       op.tries += 1;
 
